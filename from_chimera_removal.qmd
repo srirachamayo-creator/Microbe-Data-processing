@@ -1,0 +1,2177 @@
+---
+title: "from_chimera_removal"
+format: html
+editor: visual
+---
+
+## From Chimera Removal
+
+### 1.1 install and load required packages
+
+```{r message=FALSE, warning=FALSE}
+#In case these havent been installed yet (run only once!)
+
+#1. Install dada2 package
+if (!require("BiocManager", quietly = TRUE))
+  install.packages("BiocManager")
+
+BiocManager::install("dada2")
+
+#2. Install tidyverse package
+if (!require("tidyverse", quietly = TRUE))
+  install.packages("tidyverse")
+
+#3. Install ShortRead package
+BiocManager::install("ShortRead")
+
+#4. Install Biostrings package
+BiocManager::install("Biostrings")
+
+#5. Install Hmisc package
+if (!require("Hmisc", quietly = TRUE))
+  install.packages("Hmisc")
+
+#6. Install reshape2 package
+if (!require("reshape2", quietly = TRUE))
+  install.packages("reshape2")
+
+#7. Install cowplot package
+if (!require("cowplot", quietly = TRUE))
+  install.packages("cowplot")
+
+#8. Install gridExtra package
+if (!require("gridExtra", quietly = TRUE))
+  install.packages("gridExtra")
+
+#9. Install R.utils package
+if (!require("R.utils", quietly = TRUE))
+  install.packages("R.utils")
+
+#10. Install seqinr package
+BiocManager::install("seqinr")
+
+#11. Install seqinr package
+BiocManager::install("DESeq2")
+
+install.packages("ggplot2")
+```
+### 1.2 Load packages
+```{r message=FALSE, warning=FALSE}
+
+# Load necessary libraries
+library(dada2)      # Tools for high-resolution amplicon sequencing data analysis.
+library(ShortRead)  # Required by dada2 for reading and processing short read data.
+library(tidyverse)  # Collection of packages for data manipulation and visualization.
+library(Biostrings) # Provides efficient manipulation and analysis of biological sequences.
+library(Hmisc)      # Contains various functions for statistical analysis and data manipulation.
+library(reshape2)   # Functions for reshaping and aggregating data sets.
+library(cowplot)    # Enhances ggplot2 plots with additional features and functionalities.
+library(gridExtra)  # Provides functions for arranging multiple grid-based plots on a page.
+library(R.utils)    # Contains various utility functions for R.
+library(seqinr)     # Contains functions for biological sequence analysis.
+library(DESeq2)     # Contains functions for differential gene expression analysis.
+```
+
+### 1.3 Set up project directories
+
+```{r}
+#General directory (made in project): this is your project folder that contains all the directories where the raw sequences and outputs 
+path1 <- "Bioinformatics_info/" 
+list.files(path1)#verify you are in the correct path by running this line. The directories you want should appear here.
+
+# DADA2 output file in local computer: here all the outputs from the workflow will be sent.
+path2 <- "Bioinformatics_info/Pipeline_outputs/"
+list.files(path2)#verify you are in the correct path. If this is correct you will see all the outputs names appear.
+#setwd(path2) #Set this folder as working directory as we want all our outputs here
+
+#path to raw sequences
+path3 <- "Raw_data/"
+list.files(path3)#verify you are in the correct path. If this is correct you will see all the raw sequences names appear.
+```
+
+## 9 ASV Table Inspection
+
+### inspection of the raw ASV table
+
+```{r}
+#Re-load these outputs
+seqtab  <- readRDS(file = paste0(path2, "/Seqtab.rds")) # Load the output object
+
+#Also save as a csv table
+write.csv(t(seqtab), paste0(path2, "/RAW_seqtab.csv")) #Also save as a csv table
+```
+
+## 9 CHIMERIC SEQUENCES REMOVAL
+
+```{r}
+# Remove chimeric sequences from the sequence table
+seqtabnochim <- removeBimeraDenovo(
+  seqtab,                   # Input sequence table containing ASVs
+  method = "consensus",     # Method for chimera removal (consensus method)
+  multithread = TRUE,       # Enable multithreading for faster processing
+  verbose = TRUE            # Print verbose output to monitor the chimera removal process
+)
+
+#save object as an RDS file
+saveRDS(seqtabnochim, file= paste0(path2,"Seqtab_nochim.rds"), ascii = FALSE, version = NULL, compress = TRUE, refhook = NULL) 
+```
+
+### Inspection of the raw ASV table but without chimeric sequences
+
+```{r}
+#Re-load these outputs
+seqtabnochim  <- readRDS(file = paste0(path2, "/Seqtab_nochim.rds")) # Load the output object
+
+#Also save as a csv table
+write.csv(t(seqtabnochim), paste0(path2, "/Seqtab_nochim.csv")) #Also save as a csv table
+```
+
+## 10 PIPLELINE PERFORMANCE
+
+```{r}
+setwd(path2)# Set the working directory to the path2 directory
+
+#Read these lines below if you are starting a new session and need to reload these .rds files
+out <- readRDS(file = "out.rds")
+errF <- readRDS(file= "errF.rds")
+errR <- readRDS(file= "errR.rds")
+dadaFs <- readRDS(file = "dadaFs.rds")
+dadaRs <- readRDS(file = "dadaRs.rds")
+mergers <- readRDS(file = "mergers.rds")
+seqtab  <- readRDS(file = "Seqtab.rds")
+seqtabnochim  <- readRDS(file = "Seqtab_nochim.rds")
+```
+
+### 10.1 create tracking data to follow efficienc of the workflow
+
+```{r}
+setwd(path2)# Set the working directory to the path2 directory (to run this chunk)
+
+# Track reads through pipeline
+getN <- function(x) sum(getUniques(x))  # Define a function to calculate the total number of unique reads
+
+track1 <- cbind(out,                  # Combine data from multiple steps into a single matrix
+                sapply(dadaFs, getN),  # Calculate the total number of unique forward reads after denoising
+                sapply(dadaRs, getN),  # Calculate the total number of unique reverse reads after denoising
+                sapply(mergers, getN), # Calculate the total number of merged reads
+                rowSums(seqtabnochim)  # Calculate the total number of reads after chimera removal
+               )
+
+# Assign column names to the track table
+colnames(track1) <- c("Input", "Filtered", "Denoised_fwd", "Denosied_rev", "Merged", "Chimera_removal")  
+track.table1 <- as.data.frame(track1)  # Convert the matrix to a data frame for better readability
+
+# Add additional columns with metadata information (modify this accroding to your own specifications)
+track.table1$truncL <- 290           # Add a column indicating the forward read trimming length
+track.table1$truncR <- 260           # Add a column indicating the reverse read trimming length
+track.table1$trimleft_FWD_REV <- 20      # Add a column indicating the number of bases trimmed from the left end of forward reads
+track.table1$EE <- 2                  # Add a column indicating the maximum expected error rate
+track.table1$truncQ <- 2              # Add a column indicating the minimum quality score threshold for trimming
+track.table1$pooled <- "Independent"  # Add a column indicating whether reads were pooled or processed independently
+track.table1$Bimera <- "Consensus"    # Add a column indicating the method used for chimera removal
+```
+
+### 10.2 create a new one put including only the percentage of sequences kept after each step
+
+```{r}
+setwd(path2)# Set the working directory to the path2 directory (to run this chunk)
+
+# Inspect distribution of sequence lengths
+
+# Calculate percentages of reads at each step of the pipeline
+track_pct1 <- track1 %>% 
+  data.frame() %>%
+  mutate(Sample = rownames(.),  # Add a column for sample names
+         filtered_pct = ifelse(Filtered == 0, 0, 100 * (Filtered/Input)),  # Calculate the percentage of filtered reads relative to input reads
+         denoisedF_pct = ifelse(Denoised_fwd == 0, 0, 100 * (Denoised_fwd/Input)),  # Calculate the percentage of denoised forward reads relative to filtered reads
+         denoisedR_pct = ifelse(Denosied_rev == 0, 0, 100 * (Denosied_rev/Input)),  # Calculate the percentage of denoised reverse reads relative to filtered reads
+         merged_pct = ifelse(Merged == 0, 0, 100 * ((Denoised_fwd + Denosied_rev)/2)/Input),  # Calculate the percentage of merged reads relative to denoised reads
+         nonchim_pct = ifelse(Chimera_removal == 0, 0, 100 * (Chimera_removal/Input)),  # Calculate the percentage of non-chimeric reads relative to merged reads
+         total_pct = ifelse(Chimera_removal == 0, 0, 100 * Chimera_removal/Input)) %>%  # Calculate the percentage of final reads relative to input reads
+  select(Sample, ends_with("_pct"))  # Select relevant columns for the percentage table
+
+# Calculate average percentages
+track_pct_avg1 <- track_pct1 %>% summarise_at(vars(ends_with("_pct")), list(avg = mean))
+
+# Merge track.table1 and track_pct1 based on sample names
+combined_table <- merge(track.table1, track_pct1, by = 0, all = TRUE)
+
+# Write the percentage table to a CSV file
+write.csv(combined_table, file = "Track_pipeline.csv")
+```
+
+### 10.3 create a plot that shows the average percentage of sequences kept at each step of the pipeline
+
+```{r}
+setwd(path2)# Set the working directory to the path2 directory (to run this chunk)
+
+# Create a plot to visualize the progress of reads through different steps of the pipeline
+track_plot1B <- track1 %>%
+  data.frame() %>%
+  mutate(Sample = rownames(.)) %>%
+  gather(key = "Step", value = "Reads", -Sample) %>%
+  mutate(Step = factor(Step,
+                       levels = c("Input", "Filtered", "Denoised_fwd", "Denosied_rev", "Merged", "Chimera_removal"))) %>%
+  ggplot(aes(x = Step, y = Reads)) +  # Initialize a ggplot object with x as Step and y as Reads
+  geom_line(aes(group = Sample), alpha = 0.2) +  # Add a line plot for each sample
+  geom_point(alpha = 0.5, position = position_jitter(width = 0)) +  # Add jittered points for better visualization
+  stat_summary(fun.y = median, geom = "line", group = 1, color = "steelblue", size = 1, alpha = 0.5) +  # Add average line for all samples
+  stat_summary(fun.y = median, geom = "point", group = 1, color = "steelblue", size = 2, alpha = 0.5) +  # Add average  point for all samples
+  stat_summary(fun.data = median_hilow, fun.args = list(conf.int = 0.5),  # Add ribbon for interquartile range
+               geom = "ribbon", group = 1, fill = "steelblue", alpha = 0.2) +
+  geom_label(data = t(track_pct_avg1[1:5]) %>% data.frame() %>%  # Add labels for average percentages
+               rename(Percent = 1) %>%
+               mutate(Step = c("Filtered", "Denoised_fwd", "Denosied_rev", "Merged", "Chimera_removal"),
+                      Percent = paste(round(Percent, 2), "%")),
+             aes(label = Percent), y = 1.1 * max(track1[,2])) +  # Position the labels
+  geom_label(data = track_pct_avg1[5] %>% data.frame() %>%  # Add label for total remaining percentage
+               rename(total = 1),
+             aes(label = paste("Total\nRemaining:\n", round(track_pct_avg1[6], 2), "%")),
+             y = mean(track1[,6]), x = 6.5) +  # Position the label
+  expand_limits(y = 1.1 * max(track1[,2]), x = 7) +  # Expand the limits of the plot
+  theme_classic()  # Apply classic theme to the plot
+
+# Save the plot as a PNG file
+ggsave(track_plot1B, file = "Summary_plot.png", width = 10, height = 5, device="png")
+```
+
+### REMOVE LARAS DATA HERE
+```{r}
+seqtabnochim <- seqtabnochim %>%
+  select(-starts_with("LV-"))
+
+saveRDS(seqtabnochim, file= paste0("/Post_processing/","Seqtab_nochim_BON.rds"), ascii = FALSE, version = NULL, compress = TRUE, refhook = NULL) 
+```
+
+## 11 TAXONOMIC ASSIGNMENT
+
+### 11.1 Use SILVA and GTDB
+
+```{r}
+#Here I use SILVA first
+taxa1 <- assignTaxonomy(seqtabnochim,
+                        "Taxonomy/silva_nr99_v138.2_toGenus_trainset.fa.gz",
+                         outputBootstraps = TRUE, multithread=TRUE, tryRC = TRUE, minBoot = 70)
+
+saveRDS(taxa1, 
+        file = "taxa_16S_SILVA.rds", 
+        ascii = FALSE, 
+        version = NULL, 
+        compress = TRUE, 
+        refhook = NULL)  #Save rds file
+
+write.csv(taxa1, "TAXA_16S_SILVA.csv") #and a csv file of the above
+
+#Second run with GTDB
+taxa2 <- assignTaxonomy(seqtabnochim,
+                        "Taxonomy/GTDB_bac120_arc122_ssu_r202_Genus.fa.gz",
+                         outputBootstraps = TRUE, multithread=TRUE, tryRC = TRUE, minBoot = 70)
+
+saveRDS(taxa2, 
+        file= "taxa_16S_GTDB.rds",         
+        ascii = FALSE, 
+        version = NULL, 
+        compress = TRUE, 
+        refhook = NULL) #Save rds file
+
+write.csv(taxa2, "TAXA_16S_GTDB.csv")#and a csv file of the above
+```
+
+**Taxonomic assignment inspection**
+
+We can now open the taxa files we have in our outputs and have a look. These are already pre-loaded in your output folder.
+
+------------------------------------------------------------------------
+
+## POST PROCESSING
+create post processing folder
+```{r, echo=FALSE}
+
+R.version$version.string
+
+```
+
+```{r, echo=FALSE, include=FALSE, eval=FALSE, warning=FALSE}
+#Load libraries
+library(tidyverse)
+library(phyloseq)
+library(seqinr)
+library(reshape2)
+library(cowplot)
+library(RColorBrewer)
+library(readr)
+library(readxl)
+library(writexl)
+library(vegan)
+library(DESeq2)
+library(ggrepel)
+```
+
+#Data preparation
+
+```{r, echo=FALSE, include=FALSE, eval=FALSE, warning=FALSE}
+
+# Load the 16S collapsed data
+asv_table16S <- readRDS("../Post_processing/Seqtab_nochim_BON.rds")
+#Samples 75 and 32624 ASvs in the collapsed dataset
+
+#Change the colnames for ASV_1, ASV_2, etc in the ASV table (easier to work with and match the taxonomy)
+colnames(asv_table16S) <- paste0("ASV_", 1:ncol(asv_table16S))
+
+#load the taxonomy SILVA and GTDB database
+tax_table16S_SILVA <- read.csv("../Post_processing/TAXA_16S_SILVA.csv", row.names = 1)
+tax_table16S_GTDB <- read.csv("../Post_processing/TAXA_16S_SILVA.csv.csv", row.names = 1)
+
+#ASV column names match taxonomy row names?
+all(colnames(asv_table16S) == rownames(tax_table16S_SILVA)) # Should return TRUE
+
+```
+
+
+## Non bacterial sequences removal
+
+Now I will remove the non-bacterial sequences from this initial raw ASV table. Unfortunately, 16S amplicon sequencing is not perfect and primers used can also amplify plastids and mitochondrial DNA. This is specially relevant in high-order organisms like plants that may have a large number of organelles or bacteria that may have these too (e.g. Cyanobacteria) (see [Lucaciu et al. 2019](https://www.frontiersin.org/articles/10.3389/fpls.2019.01313/full)). It is important to identify this correctly, that's why in the current bioinformatic protocol, we use SILVA to identify these effectively and then GTDB to make a more accurate assignment (GTDB is not very good and detecting chloroplasts and mitochondrial 16S sequences).
+
+For this filtration step we will do the following:
+
+0)  Merge our ASV table + SILVA taxonomy + GTDB taxonomy.
+1)  **Order:** Removed ASVs assigned to chloroplasts (cyanobacteria and host) based on the SILVA taxonomy.
+2)  **Family** Removed ASVs assigned to mithochondrial DNA based on the SILVA taxonomy.
+3)  **Kingdom:** Remove ASVs assigned to Eukaryotes based on the SILVA taxonomy.
+4)  **Kingdom:** Remove ASVs unassigned to any taxa (NAs) based on both taxonomies.
+
+
+```{r, echo=T, eval=F, include=TRUE}
+
+#We start by formatting the taxonomy tables and changing column name to reflect that they are from different taxonomic repositories
+
+#Change column names to include "SILVA_" + column name
+colnames(tax_table16S_SILVA) <- paste("SILVA_", colnames(tax_table16S_SILVA), sep = "")
+
+#Change column names to include "GTDB_" + column name
+colnames(tax_table16S_GTDB) <- paste("GTDB_", colnames(tax_table16S_GTDB), sep = "")
+
+
+#0. Merge ASV table with SILVA and GTDB taxonomy
+asv_table16S_2 <- cbind(t(asv_table16S), tax_table16S_SILVA, tax_table16S_GTDB)
+
+##Now to remove the rows that contain the non-bacterial sequences____________________________________________
+
+#1.Remove rows containing the word "Chloroplast" in the "Order" column
+asv_table16S_2b <- asv_table16S_2[!grepl("Chloroplast", asv_table16S_2$SILVA_tax.Order, ignore.case = FALSE), ]
+
+#2.Remove rows containing the word "Mitochondria" in the "Family" column
+asv_table16S_2c <- asv_table16S_2b[!grepl("Mitochondria", asv_table16S_2b$SILVA_tax.Family, ignore.case = FALSE), ]
+
+#3. Remove rows containing the word "Eukaryota" in the "Kingdom" column
+asv_table16S_2d <- asv_table16S_2c[!grepl("Eukaryota", asv_table16S_2c$SILVA_tax.Kingdom, ignore.case = FALSE), ]
+
+#4.Remove rows containing the word "NA" in the "Kingdom" column in both SILVA and GTDB
+asv_table16S_2e <- asv_table16S_2d[!(is.na(asv_table16S_2d$GTDB_tax.Kingdom) & is.na(asv_table16S_2d$SILVA_tax.Kingdom)), ]
+
+#5. Remove rows containing the word "NA"exclusively in the "Kingdom" column in GTDB
+asv_table16S_2f <- asv_table16S_2e[!is.na(asv_table16S_2e$GTDB_tax.Kingdom), ]
+
+#ASV table without taxonomy
+asv_table16S_2g <- asv_table16S_2f[, -c(76:103)]
+
+#Save the ASV table for our records
+write.csv(asv_table16S_2g, "../Post_processing/ASV_table_archive/ASV_tab_nochloro.csv")
+
+```
+
+
+## Subsetting: Bulk and rhizo
+
+To avoid high variability or an unbalanced design, I will hvae three versions of this dataset: 1) Bulk and rhizo together, 2) Only Bulk and 3) only rhizppshere samples.
+
+```{r, echo=FALSE, include=FALSE, eval=FALSE, warning=FALSE}
+
+#1. Bulk and rhizosphere samples together
+
+#Remove singletons
+asv_table16S_3 <- asv_table16S_2g[which(rowSums(asv_table16S_2g) > 1),]
+
+#Remove ASVs with 0 reads across all samples
+asv_table16S_3b <- asv_table16S_3[rowSums(asv_table16S_3) > 0,]
+
+#Save this ASV table for our records if neccesary
+write.csv(asv_table16S_3b, "../Post_processing/ASV_table_archive/ASV_tab_nosingle_bulk_rhizo.csv")
+
+#2. Bulk samples
+
+#Subdivide the dataset by the last 32 samples
+asv_table16S_bulk <- asv_table16S_2g %>%
+  select(starts_with("sed"))
+
+#Remove ASV that have 0 reads across all samples as a consequence of the previous step
+asv_table16S_bulk_2 <- asv_table16S_bulk[ rowSums(asv_table16S_bulk) > 0,]
+
+#Remove singletons
+asv_table16S_bulk_3 <- asv_table16S_bulk_2[which(rowSums(asv_table16S_bulk_2) > 1),]
+
+#Save this ASV table for our records if neccesary
+write.csv(asv_table16S_bulk_3, "../Post_processing/ASV_table_archive/ASV_tab_nosingle_bulk.csv")
+
+#3. Rhizosphere samples
+
+#Subdivide the dataset by the first 43 samples
+asv_table16S_rhizo <- asv_table16S_2g %>%
+  select(starts_with("root"))
+
+#Remove ASV that have 0 reads across all samples as a consequence of the previous step
+asv_table16S_rhizo_2 <- asv_table16S_rhizo[rowSums(asv_table16S_rhizo) > 0,]
+
+#Remove singletons
+asv_table16S_rhizo_3 <- asv_table16S_rhizo_2[which(rowSums(asv_table16S_rhizo_2) > 1),]
+
+#Save this ASV table for our records if neccesary
+write.csv(asv_table16S_rhizo_3, "../Post_processing/ASV_table_archive/ASV_tab_nosingle_rhizo.csv")
+
+# 4. CONTROLS
+#Subdivide the dataset by the first 43 samples
+asv_table16S_controls <- asv_table16S_2g %>%
+  select(starts_with("blank"), starts_with("swab"))
+
+#Remove ASV that have 0 reads across all samples as a consequence of the previous step
+asv_table16S_controls_2 <- asv_table16S_controls[rowSums(asv_table16S_controls) > 0,]
+
+#Remove singletons
+asv_table16S_controls_3 <- asv_table16S_controls_2[which(rowSums(asv_table16S_controls_2) > 1),]
+
+#Save this ASV table for our records if neccesary
+write.csv(asv_table16S_rhizo_3, "../Post_processing/ASV_table_archive/ASV_tab_nosingle_controls.csv")
+```
+
+
+## Remove taxa with low abundance
+
+A final filtration step that we can do is to remove low abundant ASVs. Removal of low abundant ASVs is a common practice in microbiome studies as we improve the data by 1) reducing noise (more sequences that come from sequencing errors or at some point of the molecular analysis), 2)focusing on dominant ASV (i.e. low-abundance ASVs may contribute minimally to the overall community structure), 3) increase statistical power (can detect more robust and significant associations between microbial communities and factors of interest), 4) reduce complexity of data for interpretation, and 5) reduce computational time and resources.
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+#1. BULK and RHIZO samples together
+
+#Check distribution of ASV abundances
+hist(rowSums(asv_table16S_3b), breaks = 80, main = "Distribution of ASV abundances", xlab = "ASV abundance", ylab = "Frequency")
+
+# Define low-abundance threshold (e.g., 0.001% of total counts)
+abundance_threshold1 <- round(sum(rowSums(asv_table16S_3b)) * 0.001 / 100)
+
+#ASVs with a total abundance (across all samples) greater than approximately 47 will be retained in your dataset.
+#Tweak this threshold value if you want to be more strict (e.g., 0.01% of total counts) or more lenient (e.g., 0.0001% of total counts).
+
+# Remove low-abundant taxa
+asv_table16S_4 <- asv_table16S_3b[rowSums(asv_table16S_3b) > abundance_threshold1, ]
+
+# Total reads before filtering
+total_reads_before <- sum(asv_table16S_3b)
+
+# Total reads after filtering
+total_reads_after <- sum(asv_table16S_4)
+
+# Percentage of reads retained
+percent_retained <- (total_reads_after / total_reads_before) * 100
+
+# Display result
+percent_retained #95.07964% of reads retained
+
+#Save the ASV table for our records if necessary
+write.csv(asv_table16S_4, "../Post_processing/ASV_table_archive/ASV_tab_nolowabun_bulk_rhizo.csv")
+
+
+
+#2. BULK samples
+
+#Check distribution of ASV abundances
+hist(rowSums(asv_table16S_bulk_3), breaks = 80, main = "Distribution of ASV abundances", xlab = "ASV abundance", ylab = "Frequency")
+
+# Define low-abundance threshold (e.g., 0.001% of total counts)
+abundance_threshold2 <- round(sum(rowSums(asv_table16S_bulk_3)) * 0.001 / 100)
+
+#ASVs with a total abundance (across all samples) greater than approximately 14 will be retained in your dataset.
+#Tweak this threshold value if you want to be more strict (e.g., 0.01% of total counts) or more lenient (e.g., 0.0001% of total counts).
+
+# Remove low-abundant taxa
+asv_table16S_bulk_4 <- asv_table16S_bulk_3[rowSums(asv_table16S_bulk_3) > abundance_threshold2, ]
+
+# Total reads before filtering
+total_reads_before_bulk <- sum(asv_table16S_bulk_3)
+
+# Total reads after filtering
+total_reads_after_bulk <- sum(asv_table16S_bulk_4)
+
+# Percentage of reads retained
+percent_retained_bulk <- (total_reads_after_bulk / total_reads_before_bulk) * 100
+
+# Display result
+percent_retained_bulk #97.62337% of reads retained
+
+#Save the ASV table for our records if necessary
+write.csv(asv_table16S_bulk_4, "../Post_processing/ASV_table_archive/ASV_tab_nolowabun_bulk.csv")
+
+
+#3. RHIZO samples
+
+#Check distribution of ASV abundances
+hist(rowSums(asv_table16S_rhizo_3), breaks = 80, main = "Distribution of ASV abundances", xlab = "ASV abundance", ylab = "Frequency")
+
+# Define low-abundance threshold (e.g., 0.001% of total counts)
+abundance_threshold3 <- round(sum(rowSums(asv_table16S_rhizo_3)) * 0.001 / 100)
+
+#ASVs with a total abundance (across all samples) greater than approximately 33 will be retained in your dataset.
+#Tweak this threshold value if you want to be more strict (e.g., 0.01% of total counts) or more lenient (e.g., 0.0001% of total counts).
+
+# Remove low-abundant taxa
+asv_table16S_rhizo_4 <- asv_table16S_rhizo_3[rowSums(asv_table16S_rhizo_3) > abundance_threshold3, ]
+
+# Total reads before filtering
+total_reads_before_rhizo <- sum(asv_table16S_rhizo_3)
+
+# Total reads after filtering
+total_reads_after_rhizo <- sum(asv_table16S_rhizo_4)
+
+# Percentage of reads retained
+percent_retained_rhizo <- (total_reads_after_rhizo / total_reads_before_rhizo) * 100
+
+# Display result
+percent_retained_rhizo #95.36086% of reads retained
+
+#Save the ASV table for our records if necessary
+write.csv(asv_table16S_rhizo_4, "../Post_processing/ASV_table_archive/ASV_tab_nolowabun_rhizo.csv")
+
+```
+
+Retention rates between 85–95% indicate that filtering was effective without being overly aggressive, ensuring that sequencing noise was removed while preserving the majority of meaningful data. This means that even if many ASVs are lost, these were actually mostly noise. If retention drops below 80%, it may suggest that too many real ASVs were removed, which could be problematic for analyses involving highly diverse, low-abundance communities. 
+
+
+## Taxonomy tables
+
+```{r, echo=FALSE, include=FALSE, eval=FALSE, warning=FALSE}
+
+#1. Bulk and rhizo samples together____________________________________________________________________
+
+#Load the ASV table (if needed)
+asv_table16S_4 <- read.csv("../Post_processing/ASV_table_archive/ASV_tab_nolowabun_bulk_rhizo.csv", row.names = 1)
+
+# Final taxonomy table GTDB
+
+#Match asv table rownames to the taxonomic data in GTDB first
+tax_table16S_GTDB_2 <- tax_table16S_GTDB[rownames(asv_table16S_4),]
+
+#Remove .tax.from column names
+colnames(tax_table16S_GTDB_2) <- gsub("GTDB_tax.", "", colnames(tax_table16S_GTDB_2))
+
+# Replace NA values with "Unidentified_" followed by the last non-NA taxonomic level
+for (i in 1:nrow(tax_table16S_GTDB_2)) {
+  last_non_na <- c()
+  for (col in c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")) {
+    non_na_values <- na.omit(tax_table16S_GTDB_2[i, col])
+    if (length(non_na_values) > 0) {
+      last_non_na[col] <- tail(non_na_values, 1)
+      tax_table16S_GTDB_2[i, col][is.na(tax_table16S_GTDB_2[i, col])] <- paste("Unidentified ", last_non_na[col], sep = "")
+    } else {
+      tax_table16S_GTDB_2[i, col] <- paste("Unidentified ", last_non_na[tail(which(!is.na(last_non_na)), 1)], sep = "")
+    }
+  }
+}
+
+#Save taxonomy
+write.csv(tax_table16S_GTDB_2, "../Post_processing/Taxonomy_GTDB_16S_bulk_rhizo.csv")
+
+
+#######################
+
+
+#2. Bulk samples____________________________________________________________________________________________
+
+#Load the ASV table (if needed)
+asv_table16S_bulk_4 <- read.csv("../Post_processing/ASV_table_archive/ASV_tab_nolowabun_bulk.csv", row.names = 1)
+
+# Final taxonomy table GTDB
+#Match asv table rownames to the taxonomic data in GTDB first
+tax_table16S_GTDB_3 <- tax_table16S_GTDB[rownames(asv_table16S_bulk_4),]
+
+#Remove .tax.from column names
+colnames(tax_table16S_GTDB_3) <- gsub("GTDB_tax.", "", colnames(tax_table16S_GTDB_3))
+
+# Replace NA values with "Unidentified_" followed by the last non-NA taxonomic level
+for (i in 1:nrow(tax_table16S_GTDB_3)) {
+  last_non_na <- c()
+  for (col in c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")) {
+    non_na_values <- na.omit(tax_table16S_GTDB_3[i, col])
+    if (length(non_na_values) > 0) {
+      last_non_na[col] <- tail(non_na_values, 1)
+      tax_table16S_GTDB_3[i, col][is.na(tax_table16S_GTDB_3[i, col])] <- paste("Unidentified ", last_non_na[col], sep = "")
+    } else {
+      tax_table16S_GTDB_3[i, col] <- paste("Unidentified ", last_non_na[tail(which(!is.na(last_non_na)), 1)], sep = "")
+    }
+  }
+}
+
+#Save taxonomy
+write.csv(tax_table16S_GTDB_3, "../Post_processing/Taxonomy_GTDB_16S_bulk.csv")
+
+
+#######################
+
+#3. Rhizo samples____________________________________________________________________________________________
+
+#Load the ASV table (if needed)
+asv_table16S_rhizo_4 <- read.csv("../Post_processing/ASV_table_archive/ASV_tab_nolowabun_rhizo.csv", row.names = 1)
+
+# Final taxonomy table GTDB
+#Match asv table rownames to the taxonomic data in GTDB first
+tax_table16S_GTDB_4 <- tax_table16S_GTDB[rownames(asv_table16S_rhizo_4),]
+
+#Remove .tax.from column names
+colnames(tax_table16S_GTDB_4) <- gsub("GTDB_tax.", "", colnames(tax_table16S_GTDB_4))
+
+# Replace NA values with "Unidentified_" followed by the last non-NA taxonomic level
+for (i in 1:nrow(tax_table16S_GTDB_4)) {
+  last_non_na <- c()
+  for (col in c("Kingdom", "Phylum", "Class", "Order", "Family", "Genus", "Species")) {
+    non_na_values <- na.omit(tax_table16S_GTDB_4[i, col])
+    if (length(non_na_values) > 0) {
+      last_non_na[col] <- tail(non_na_values, 1)
+      tax_table16S_GTDB_4[i, col][is.na(tax_table16S_GTDB_4[i, col])] <- paste("Unidentified ", last_non_na[col], sep = "")
+    } else {
+      tax_table16S_GTDB_4[i, col] <- paste("Unidentified ", last_non_na[tail(which(!is.na(last_non_na)), 1)], sep = "")
+    }
+  }
+}
+
+#Save taxonomy
+write.csv(tax_table16S_GTDB_4, "../Post_processing/Taxonomy_GTDB_16S_rhizo.csv")
+
+
+#######################
+
+
+```
+
+
+## Library size exploration
+
+Before we finish this section, let's do some exploratory data analysis of the library sizes to fully understand if our sampling design had any effect on the amount of bacteria that were sequenced. 
+
+```{r, echo=FALSE, include=FALSE, eval=FALSE, warning=FALSE}
+
+#1. Bulk and rhizosphere samples together______________________________________________________
+
+#Load metadata
+metadata_16S_1 <- read_xlsx("../Post_processing/Metadata_Bulk_rhizo.xlsx", sheet = "Bulk_rhizo")
+
+# Put sample_data into a ggplot-friendly data.frame
+df_bulk_rhizo <- metadata_16S_1
+df_bulk_rhizo$LibrarySize <- colSums(asv_table16S_4)
+
+#Plot library sizes for bulk and rhizo
+inspect_plot_bulk_rhizo <- ggplot(data=df_bulk_rhizo, aes(x=Sample_ID, y=LibrarySize, color=Sedim_removal, shape=rhizo_removal)) + 
+  geom_point(size=8)+
+  ggtitle("Inspect library sizes: Bulk vs Rhizo")+
+  scale_shape_manual(values = c(18,19,17,16))+
+  facet_grid(salinity_trt~Type, scales = "free")+
+  theme(axis.text.y = element_text(size = 16), axis.title.y = element_text(size=16, face='bold'),
+        axis.text.x = element_text(size= 18, angle = 90), axis.title.x = element_text(size= 18),
+        legend.position="bottom", legend.direction="horizontal",
+        legend.title = element_text(size= 20, face='bold'),
+        legend.text= element_text(size= 20),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text.y = element_text(size=25, face="bold"),  # Adjust facet strip text
+        strip.text.x = element_text(size=25, face="bold"),  # Adjust facet strip text
+        strip.placement = "outside", # Move the strips outside the panels
+        plot.title = element_text( face= "bold", size= 20))
+
+#Save plot using ggsave
+ggsave("../Post_processing/Inspect_library_sizes_Bulk_rhizo.png", plot = inspect_plot_bulk_rhizo, width = 75, height = 40, units = "cm")
+
+
+#Summarize by factors
+df_bulk_rhizo2 <- df_bulk_rhizo %>%
+  group_by(Type, salinity_trt, rhizo_removal, Sedim_removal) %>%
+  summarize(mean_library_size = mean(LibrarySize), sd_library_size = sd(LibrarySize),
+            n= n(),  
+            SE = sd(LibrarySize)/sqrt(n()))
+
+#Visualize the summary
+inspect_plot_bulk_rhizo2 <-ggplot(data=df_bulk_rhizo2, aes(x=rhizo_removal, y=mean_library_size, fill=Sedim_removal)) +  
+  geom_bar(stat="identity", position="dodge")+
+  geom_errorbar(aes(ymin = mean_library_size - SE, ymax = mean_library_size + SE), width=0.10, size= 1,
+                position = position_dodge(width = 0.9))+
+  facet_grid(salinity_trt~Type, scales = "free")+
+  ggtitle("Mean library sizes")+
+  #scale_fill_manual(values = cols_sampling)+
+  theme(axis.text.y = element_text(size = 16), axis.title.y = element_text(size=16, face='bold'),
+        axis.text.x = element_text(size= 18), axis.title.x = element_text(size=16, face='bold'),
+        legend.position="right", legend.direction="vertical",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 14),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text.y = element_text(size=25, face="bold"),  # Adjust facet strip text
+        strip.text.x = element_text(size=25, face="bold"),  # Adjust facet strip text
+        strip.placement = "outside", # Move the strips outside the panels
+        strip.background =element_rect(fill="grey90"),
+        plot.title = element_text( face= "bold", size= 20))
+
+
+
+#Save plot using ggsave
+ggsave("../Post_processing/Mean_library_sizes_Bulk_rhizo.png", plot = inspect_plot_bulk_rhizo2, width = 45, height = 30, units = "cm")
+
+
+```
+
+
+## Normalization
+
+### Rhizo and bulk sediments
+
+**Raw data***
+
+In sequencing data analysis, understanding the variability in library sizes across samples is crucial before applying normalization techniques. Large disparities in read counts across samples can introduce biases, particularly in relative abundance measurements, potentially skewing downstream stats. To assess the need for normalization, I will focus here on the distribution of total sequence reads per sample. 
+
+Using both visual (histogram, Q-Q plot, and density plot) and statistical (coefficient of variation and Shapiro-Wilk test) methods, we evaluated the library sizes' spread and normality. This initial assessment provides insight into whether library sizes are comparable across samples or if significant adjustments are required, guiding the selection of appropriate normalization methods to mitigate sequencing depth biases and enhance the robustness of ecological inferences.
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+#Load the ASV table (if needed)
+asv_tab_16S <- read.csv("../Post_processing/ASV_table_archive/ASV_tab_nolowabun_bulk_rhizo.csv", row.names = 1)
+
+#1. Summary statistics of library sizes
+library_sizes_16S <- colSums(asv_tab_16S)
+summary_stats_16S <- summary(library_sizes_16S)
+summary_stats_16S
+
+   # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+   # 1300   31403   59033   59254   82631  215332 
+
+# Calculate coefficient of variation (CV) as an indicator of variability %
+cv_library_size_raw <- round((sd(library_sizes_16S) / mean(library_sizes_16S) * 100),2)
+cv_library_size_raw #63.6%
+
+
+```
+
+Here’s how to interpret this:
+
+**Low CV (< 20%):** Indicates relatively uniform library sizes, meaning samples have similar sequencing depths. In this case, normalization might have a minimal effect. If this is the case, a normalization would be less crucial, but applying a light normalization (like relative abundance) can also help to ensure that the data is comparable. More if we run differential abundance analysis that might be slighly sensitive to small differences in library sizes.
+
+**Moderate CV (20-40%):** Reflects some variability in library sizes, where normalization would be beneficial to minimize potential bias.
+
+**High CV (> 40%):** Indicates significant variability in sequencing depth across samples, suggesting a strong need for normalization to correct for these differences before further analysis.
+
+Now let's look at specific cases or rather extreme cases to determine how much difference there is between the samples with the least and most reads:
+
+``` {r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Find min and max read counts and their indices
+min_reads_index_16S <- which.min(library_sizes_16S) 
+min_reads_index_16S #Sample X45 has the least
+
+max_reads_index_16S <- which.max(library_sizes_16S)
+max_reads_index_16S #Sample AS1  has the most
+
+min_reads_16S <- library_sizes_16S[min_reads_index_16S]
+max_reads_16S <- library_sizes_16S[max_reads_index_16S]
+percentage_difference_16S <- ((max_reads_16S - min_reads_16S) / min_reads_16S)
+percentage_difference_16S 
+#So sample ASI has 164.64 times more reads than sample X45
+
+```
+
+**Normality**
+
+Now lets visually inspect the distribution of library sizes using a histogram and Q-Q plot to assess normality.
+
+*1. Histograms*
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+#General histogram______________________________________________________________________
+
+# Histogram
+hist_plot1 <- ggplot(data = data.frame(library_sizes_16S), aes(x = library_sizes_16S)) +
+  geom_histogram(binwidth = 5000, fill = "steelblue", color = "black") +
+  labs(title = "Distribution of Library Sizes (Raw Data)", x = "Number of Reads", y = "Number of Samples")+
+    annotate("text", x = Inf, y = Inf,  # Position at the top-right corner
+    label = paste("CV =", cv_library_size_raw, "%"),
+    hjust = 1.1, vjust = 1.1, size = 6, color = "black", fontface = "bold") +
+ theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+*2. Q-Q plot*
+
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Perform Shapiro-Wilk test
+shapiro_test <- shapiro.test(library_sizes_16S)
+W_value <- round(shapiro_test$statistic, 4)
+p_value <- formatC(shapiro_test$p.value, format = "e", digits = 2)
+
+# Q-Q plot with Shapiro-Wilk test annotation
+norm_plot1 <- ggplot(data = data.frame(library_sizes_16S), aes(sample = library_sizes_16S)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(title = "Normal Q-Q Plot of Library Sizes (Raw Data)", 
+       x = "Theoretical Quantiles", 
+       y = "Sample Quantiles") +
+  annotate("text", x = -2, y = max(library_sizes_16S) * 0.9, 
+           label = paste("Shapiro-Wilk W =", W_value, "\n", "p-value =", p_value), 
+           size = 4, hjust = 0, color = "black")+
+   theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+**Shapiro-Wilks test:**
+
+Sometimes a bit strict but I added this test here to have additional evidence to accept or not the normalization. A low p-value here (< 0.05) suggests that the distribution of library sizes deviates significantly from a normal distribution. This means we can reject the null hypothesis of normality, indicating that the library sizes are not normally distributed.
+
+**Q-Q plot:**
+
+The plot shows deviations from the line, especially in the upper and lower tails (the ends of the distribution). This further supports that the library sizes have a non-normal distribution, with some samples having much higher or lower read counts compared to the majority of samples. 
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Combine plots
+library_size_plots1 <- plot_grid(hist_plot1, norm_plot1, ncol = 2, labels = "AUTO", label_size = 20)
+
+#Save plots
+ggsave("../Post_processing/Main results/Library_size_RAW_16S.png", plot = library_size_plots1, width = 20, height = 6, dpi = 300)
+
+```
+
+**3. Ordination NMDS**
+
+I will finalize this exploratory analysis by doing a quick a dirty NMDS ordination to see if there are any patterns in the data according to the different factors I'm using. This will help me see later if the normalization methods are working or not as well, and to detect potential outliers in the data.
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+
+#log transformation needed to correct biases from having some more and less abundant ASVs
+asv_log_16S <- log(t(asv_tab_16S + 1))
+
+#Calculate Bray-Curtis dissimilarity
+Dat_16S.bc <- vegdist(asv_log_16S, method = "bray") #Bray curtis
+
+#Calculate NMDS 
+Dat_16S.nmds <- metaMDS(Dat_16S.bc, autotransform = F, trace = F, trymax=50)
+Dat_16S.nmds # stress = 0.06932793 
+
+#Stress plot
+stressplot(Dat_16S.nmds, main = "Stress plot") #R2 = 0.999
+
+
+#1. Extract coordinates for the NMDS_____________________________________________________________________________________
+
+#Extract values from NMDS plot
+nmds_16S_bc1 <- plot(Dat_16S.nmds)
+NMDS_16S_bc1 <- data.frame(NMDS1 = nmds_16S_bc1$sites[,1], 
+                      NMDS2 = nmds_16S_bc1$sites[,2],
+                      Type = metadata_16S_1$Type,
+                      salinity_trt = metadata_16S_1$salinity_trt,
+                      rhizo_removal = metadata_16S_1$rhizo_removal,
+                      sedim_removal = metadata_16S_1$Sedim_removal)
+
+
+
+#NMDS showing all levels of analysis
+
+(x=rhizo_removal, y=mean_library_size, fill=Sedim_removal
+
+NMDS_raw_16S <- ggplot() +
+  geom_point(data = NMDS_16S_bc1, aes(NMDS1, NMDS2, color = rhizo_removal, shape= sedim_removal), size = 2.5) +
+  #scale_colour_manual(values = cols_sampling)+ 
+  # scale_shape_manual(values= shapes)+
+  labs(title="NMDS: Raw data, Bray-curtis (stress= 0.07)", x = "NMDS1", y = "NMDS2")+
+  facet_grid(salinity_trt~Type, scales = "free")+
+    theme(axis.text.x = element_blank(), axis.title.x = element_text(size=16, face="bold"),  
+        axis.text.y = element_blank(), axis.title.y = element_text(size=16, face="bold"),
+        axis.ticks = element_blank(),
+        title = element_text(size=15, face="bold"),
+        panel.background = element_blank(), 
+        panel.border = element_rect(fill = NA, colour = "black", size=1),
+        legend.position = "right",
+        legend.box = "vertical",
+        legend.text = element_text(size=14), 
+        legend.title= element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.text.x = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.placement = "outside")  # Move the strips outside the panels
+
+#Save nmds plot
+ggsave("../Post_processing/Main results/NMDS_RAW_16S.png", plot = NMDS_raw_16S, width = 10, height = 7, dpi = 300)
+
+
+```
+
+
+________________________________________________________________________________________________________________________
+
+
+**Relative abundance**
+
+The simplest normalization method is relative abundance, which calculates the proportion of each ASV in a sample relative to the total number of reads in that sample. This method is widely used in microbiome studies to account for differences in sequencing depth across samples, providing a comparable measure of ASV abundance.If library sizes are relatively uniform (e.g. Cv < 20%), relative abundance normalization can be sufficient to correct for sequencing depth biases. However, it is not recommended for datasets with large disparities in library sizes, as it can introduce biases in downstream analyses.Lets calculate the relative abundance of the ASVs in the dataset.
+
+For this particular dataset, it is clear that library size disparities are very large, however calculating a relative abundance table and doing some visualizations can help us understand the data better and we can use the table for later analyses.
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+# Double-check that  no column has a sum of zero before dividing
+col_totals <- colSums(asv_tab_16S)
+if (any(col_totals == 0)) {
+  warning("One or more samples have a total count of zero; check your data for potential issues.")
+}
+#If no message: all ok!
+
+#Create a new table with relative abundances on asv_tab_16S on 100% scale
+asv_relabun_16S <- sweep(asv_tab_16S, 2, colSums(asv_tab_16S), FUN = "/") * 100
+
+# Check if the sum of the relative abundances is 100 for each sample
+col_sums_check <- colSums(asv_relabun_16S)
+if (all(abs(col_sums_check - 100) < 1e-6)) {
+  message("All columns sum to 100%, as expected.")
+} else {
+  warning("Some columns do not sum to 100%. Check the data.")
+}
+
+#All columns sum to 100%, as expected.
+
+#Save relative abundance table
+write.csv(asv_relabun_16S, "../Post_processing/Main results/ASV_relabun_16S.csv")
+
+```
+
+
+________________________________________________________________________________________________________________________
+
+
+**DESEq scaling method**
+
+DESeq2 normalization is a method that corrects for differences in sequencing depth across samples, aiming to keep data in an "absolute" abundance format rather than converting it to relative abundances. This approach works by selecting a reference abundance for each taxon, which is the geometric mean of that taxon’s abundances across all samples. For each sample, a scaling factor is then calculated as the median of ratios between the sample’s counts and the reference counts for all taxa.
+
+The assumption here is that most taxa are not differentially abundant, meaning their abundances should be fairly stable across samples. This median ratio is then used to adjust read counts, providing an estimate of what counts would look like if all samples had the same library size. One advantage of DESeq2 is that it can consider experimental design factors, which helps distinguish differences in library size due to biological variables versus those due to technical artifacts.
+
+**Some limitations**
+
+DESeq2 assumes that:
+
+1) Most taxa are not differentially abundant.
+2) Among differentially abundant taxa, there is a balance between over-abundant and under-abundant taxa.
+
+While these assumptions are reasonable for RNA-seq data (deseq2 was originally done for this), they may not always apply to microbiome data, which can have high diversity and compositional effects. Additionally, DESeq2 is not specifically designed for sparse datasets (datasets with a lot of zeros), which are common in microbiome studies. Low sequencing depth and a large number of zeros can introduce biases for this method to be used efficiently.
+
+To partially address this, DESeq2 offers a "poscounts" estimator, which can handle zero-inflated data better than the standard approach. This estimator adjusts scaling factors for samples with many zero counts, making it more suitable for microbiome data.We will use this method here.
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+# Ensure ASV table and metadata sample names are in the same order
+# Reorder `asv_tab_16S` columns to match `metadata` rownames if necessary
+#verify that sample names match, or reorder them if they don't match.
+
+asv_tab_16S2 <- as.matrix(asv_tab_16S)
+if (!all.equal(colnames(asv_tab_16S), rownames(metadata_16S_1))) {
+  asv_tab_16S2 <- asv_tab_16S2[, rownames(metadata_16S_1)]
+}
+
+#Create DESEQ object to run DESEQ
+#Here we are using a full model with all the factors in the dataset, trying to model the hypothesis we are interested in testing
+deseq_16S <- DESeqDataSetFromMatrix(countData = asv_tab_16S2,
+                                      colData = metadata_16S_1,
+                          design = ~ Type + salinity_trt + rhizo_removal + Sedim_removal)
+
+```
+
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Estimate size factors using "poscounts" to handle zero-inflated data
+deseq_16S <- estimateSizeFactors(deseq_16S, type = "poscounts")
+
+# Extract size factors
+size_factors_16S <- sizeFactors(deseq_16S)
+
+# Extract relevant columns from metadata and add sample names as a new column. 
+#We will create a dataframe with all correction values from all methods
+summary_norm_16S_rhizo_bulk <- data.frame(
+  SampleName = rownames(metadata_16S_1),
+  Type = metadata_16S_1$Type,
+  salinity_trt = metadata_16S_1$salinity_trt,
+  rhizo_removal = metadata_16S_1$rhizo_removal,
+  sedim_removal = metadata_16S_1$Sedim_removal,
+  SizeFactor_DESEQ2 = size_factors_16S)
+
+#Summary statistics for scaling factors
+summary_scaling1 <- summary(summary_norm_16S_rhizo_bulk$SizeFactor_DESEQ2)
+summary_scaling1
+
+ # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+ # 0.2539  0.6022  1.0914  2.3592  1.4397 68.6812 
+
+```
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}  
+
+# Extract normalized counts directly using `counts()`
+asv_deseq_16S1 <- counts(deseq_16S, normalized = TRUE)
+
+# Round normalized counts if necessary
+asv_deseq_16S1 <- as.data.frame(round(asv_deseq_16S1))
+
+# Remove ASVs with zero counts across all samples (as a sanity-check after normalization)
+asv_deseq_16S1 <- asv_deseq_16S1[rowSums(asv_deseq_16S1) > 0, ]
+
+#Save deseq2 normalized table
+write.csv(asv_deseq_16S1, "../Post_processing/Main results/ASV_deseq_Bulk_Rhizo_16S.csv")
+
+```
+
+**Variation in library sizes**
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+#1. Summary statistics of library sizes
+library_sizes_deseq_16S1 <- colSums(asv_deseq_16S1)
+summary_stats_deseq_16S1 <- summary(library_sizes_deseq_16S1)
+summary_stats_deseq_16S1
+
+  #   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+  # 3006   41102   56558   51934   65352   91626 
+
+# Calculate coefficient of variation (CV) as an indicator of variability %
+cv_library_size_deseq1 <- round((sd(library_sizes_deseq_16S1) / mean(library_sizes_deseq_16S1) * 100),2)
+cv_library_size_deseq1 #38.57%
+
+```
+
+Here’s how to interpret this:
+
+**Low CV (< 20%):** Indicates relatively uniform library sizes, meaning samples have similar sequencing depths. In this case, normalization might have a minimal effect. If this is the case, a normalization would be less crucial, but applying a light normalization (like relative abundance) can also help to ensure that the data is comparable. More if we run differential abundance analysis that might be slighly sensitive to small differences in library sizes.
+
+**Moderate CV (20-40%):** Reflects some variability in library sizes, where normalization would be beneficial to minimize potential bias.
+
+**High CV (> 40%):** Indicates significant variability in sequencing depth across samples, suggesting a strong need for normalization to correct for these differences before further analysis.
+
+
+**Normality**
+
+Now lets visually inspect the distribution of library sizes using a histogram and Q-Q plot to assess normality.
+
+*1. Histograms*
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+#General histogram______________________________________________________________________
+
+# Histogram
+hist_plot2 <- ggplot(data = data.frame(library_sizes_deseq_16S1), aes(x = library_sizes_deseq_16S1)) +
+  geom_histogram(binwidth = 5000, fill = "steelblue", color = "black") +
+  labs(title = "Distribution of Library Sizes (DESeq2 Normalized)", x = "Number of Reads", y = "Number of Samples")+
+    annotate("text", x = Inf, y = Inf,  # Position at the top-right corner
+    label = paste("CV =", cv_library_size_deseq1, "%"),
+    hjust = 1.1, vjust = 1.1, size = 6, color = "black", fontface = "bold") +
+ theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+*2. Q-Q plot*
+
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Perform Shapiro-Wilk test
+shapiro_test <- shapiro.test(library_sizes_deseq_16S1)
+W_value <- round(shapiro_test$statistic, 4)
+p_value <- formatC(shapiro_test$p.value, format = "e", digits = 2)
+
+# Q-Q plot with Shapiro-Wilk test annotation
+norm_plot2 <- ggplot(data = data.frame(library_sizes_deseq_16S1), aes(sample = library_sizes_deseq_16S1)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(title = "Normal Q-Q Plot of Library Sizes (DESeq2 Normalized)", 
+       x = "Theoretical Quantiles", 
+       y = "Sample Quantiles") +
+  annotate("text", x = -2, y = max(library_sizes_deseq_16S1) * 0.9, 
+           label = paste("Shapiro-Wilk W =", W_value, "\n", "p-value =", p_value), 
+           size = 4, hjust = 0, color = "black")+
+   theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+**Shapiro-Wilks test:**
+
+Sometimes a bit strict but I added this test here to have additional evidence to accept or not the normalization. A low p-value here (< 0.05) suggests that the distribution of library sizes deviates significantly from a normal distribution. This means we can reject the null hypothesis of normality, indicating that the library sizes are not normally distributed.
+
+**Q-Q plot:**
+
+The plot shows deviations from the line, especially in the upper and lower tails (the ends of the distribution). This further supports that the library sizes have a non-normal distribution, with some samples having much higher or lower read counts compared to the majority of samples. 
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Combine plots
+library_size_plots2 <- plot_grid(hist_plot2, norm_plot2, ncol = 2, labels = "AUTO", label_size = 20)
+
+#Save plots
+ggsave("../Post_processing/Library_size_DESEQ2_Bulk_Rhizo_16S.png", plot = library_size_plots2, width = 20, height = 6, dpi = 300)
+
+
+```
+
+**3. Ordination NMDS**
+
+I will finalize this exploratory analysis by doing a quick a dirty NMDS ordination to see if there are any patterns in the data according to the different factors I'm using now the deseq2 normlaized data. This will help me see later if the normalization methods are working or not as well, and to detect potential outliers in the data.
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+
+#Calculate Bray-Curtis dissimilarity
+Dat_16S.bc1 <- vegdist(t(asv_deseq_16S1), method = "bray") #Bray curtis
+
+#Calculate NMDS
+Dat_16S.nmds1 <- metaMDS(Dat_16S.bc1, autotransform = F, trace = F, trymax=50)
+Dat_16S.nmds1 # stress = 0.08427717
+
+#Stress plot
+stressplot(Dat_16S.nmds1, main = "Stress plot") #R2 = 0.99
+
+
+#1. Extract coordinates for the NMDS_____________________________________________________________________________________
+
+#Extract values from NMDS plot
+nmds_16S_bc1b <- plot(Dat_16S.nmds1)
+NMDS_16S_bc1b <- data.frame(NMDS1 = nmds_16S_bc1b$sites[,1], 
+                      NMDS2 = nmds_16S_bc1b$sites[,2],
+                      Type = metadata_16S_1$Type,
+                      salinity_trt = metadata_16S_1$salinity_trt,
+                      rhizo_removal = metadata_16S_1$rhizo_removal,
+                      sedim_removal = metadata_16S_1$Sedim_removal)
+
+
+
+#NMDS showing all levels of analysis
+NMDS_deseq_16S <- ggplot() +
+  geom_point(data = NMDS_16S_bc1b, aes(NMDS1, NMDS2, color = rhizo_removal, shape= sedim_removal), size = 2.5) +
+  #scale_colour_manual(values = cols_sampling)+ 
+  # scale_shape_manual(values= shapes)+
+  labs(title="NMDS: DESEQ2, Bray-curtis (stress= 0.08)", x = "NMDS1", y = "NMDS2")+
+  facet_grid(salinity_trt~Type, scales = "free")+
+    theme(axis.text.x = element_blank(), axis.title.x = element_text(size=16, face="bold"),  
+        axis.text.y = element_blank(), axis.title.y = element_text(size=16, face="bold"),
+        axis.ticks = element_blank(),
+        title = element_text(size=15, face="bold"),
+        panel.background = element_blank(), 
+        panel.border = element_rect(fill = NA, colour = "black", size=1),
+        legend.position = "right",
+        legend.box = "vertical",
+        legend.text = element_text(size=14), 
+        legend.title= element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.text.x = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.placement = "outside")  # Move the strips outside the panels
+
+#Save nmds plot
+ggsave("../Post_processing/Main results/NMDS_DESEQ2_16S.png", plot = NMDS_deseq_16S, width = 10, height = 7, dpi = 300)
+
+
+```
+
+
+### Rhizo only
+
+**Raw data***
+
+In sequencing data analysis, understanding the variability in library sizes across samples is crucial before applying normalization techniques. Large disparities in read counts across samples can introduce biases, particularly in relative abundance measurements, potentially skewing downstream stats. To assess the need for normalization, I will focus here on the distribution of total sequence reads per sample. 
+
+Using both visual (histogram, Q-Q plot, and density plot) and statistical (coefficient of variation and Shapiro-Wilk test) methods, we evaluated the library sizes' spread and normality. This initial assessment provides insight into whether library sizes are comparable across samples or if significant adjustments are required, guiding the selection of appropriate normalization methods to mitigate sequencing depth biases and enhance the robustness of ecological inferences.
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+#Load the ASV table (if needed)
+asv_tab_16S2 <- read.csv("../Post_processing/ASV_table_archive/ASV_tab_nolowabun_rhizo.csv", row.names = 1)
+
+#Filter metadata to include Type = Rhizo
+metadata_16S_rhizo <- metadata_16S_1[metadata_16S_1$Type == "Rhizo", ]
+
+#1. Summary statistics of library sizes
+library_sizes_16S2 <- colSums(asv_tab_16S2)
+summary_stats_16S2 <- summary(library_sizes_16S2)
+summary_stats_16S2
+
+   # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+   #  1296   43575   67924   72504  104626  215332 
+
+# Calculate coefficient of variation (CV) as an indicator of variability %
+cv_library_size_raw2 <- round((sd(library_sizes_16S2) / mean(library_sizes_16S2) * 100),2)
+cv_library_size_raw2 #58.33%
+
+
+```
+
+Here’s how to interpret this:
+
+**Low CV (< 20%):** Indicates relatively uniform library sizes, meaning samples have similar sequencing depths. In this case, normalization might have a minimal effect. If this is the case, a normalization would be less crucial, but applying a light normalization (like relative abundance) can also help to ensure that the data is comparable. More if we run differential abundance analysis that might be slighly sensitive to small differences in library sizes.
+
+**Moderate CV (20-40%):** Reflects some variability in library sizes, where normalization would be beneficial to minimize potential bias.
+
+**High CV (> 40%):** Indicates significant variability in sequencing depth across samples, suggesting a strong need for normalization to correct for these differences before further analysis.
+
+Now let's look at specific cases or rather extreme cases to determine how much difference there is between the samples with the least and most reads:
+
+``` {r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Find min and max read counts and their indices
+min_reads_index_16S2 <- which.min(library_sizes_16S2) 
+min_reads_index_16S2 #Sample X45 has the least
+
+max_reads_index_16S2 <- which.max(library_sizes_16S2)
+max_reads_index_16S2 #Sample AS1  has the most
+
+min_reads_16S2 <- library_sizes_16S2[min_reads_index_16S2]
+max_reads_16S2 <- library_sizes_16S2[max_reads_index_16S2]
+percentage_difference_16S2 <- ((max_reads_16S2 - min_reads_16S2) / min_reads_16S2)
+percentage_difference_16S2
+#So sample ASI has 165.1512 times more reads than sample X45
+
+```
+
+**Normality**
+
+Now lets visually inspect the distribution of library sizes using a histogram and Q-Q plot to assess normality.
+
+*1. Histograms*
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+#General histogram______________________________________________________________________
+
+# Histogram
+hist_plot1b <- ggplot(data = data.frame(library_sizes_16S2), aes(x = library_sizes_16S2)) +
+  geom_histogram(binwidth = 5000, fill = "steelblue", color = "black") +
+  labs(title = "Distribution of Library Sizes (Raw Data)", x = "Number of Reads", y = "Number of Samples")+
+    annotate("text", x = Inf, y = Inf,  # Position at the top-right corner
+    label = paste("CV =", cv_library_size_raw2, "%"),
+    hjust = 1.1, vjust = 1.1, size = 6, color = "black", fontface = "bold") +
+ theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+*2. Q-Q plot*
+
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Perform Shapiro-Wilk test
+shapiro_test2 <- shapiro.test(library_sizes_16S2)
+W_value2 <- round(shapiro_test2$statistic, 4)
+p_value2 <- formatC(shapiro_test2$p.value, format = "e", digits = 2)
+
+# Q-Q plot with Shapiro-Wilk test annotation
+norm_plot1b <- ggplot(data = data.frame(library_sizes_16S2), aes(sample = library_sizes_16S2)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(title = "Normal Q-Q Plot of Library Sizes (Raw Data)", 
+       x = "Theoretical Quantiles", 
+       y = "Sample Quantiles") +
+  annotate("text", x = -2, y = max(library_sizes_16S2) * 0.9, 
+           label = paste("Shapiro-Wilk W =", W_value2, "\n", "p-value =", p_value2), 
+           size = 4, hjust = 0, color = "black")+
+   theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+**Shapiro-Wilks test:**
+
+Sometimes a bit strict but I added this test here to have additional evidence to accept or not the normalization. A low p-value here (< 0.05) suggests that the distribution of library sizes deviates significantly from a normal distribution. This means we can reject the null hypothesis of normality, indicating that the library sizes are not normally distributed.
+
+**Q-Q plot:**
+
+The plot shows deviations from the line, especially in the upper and lower tails (the ends of the distribution). This further supports that the library sizes have a non-normal distribution, with some samples having much higher or lower read counts compared to the majority of samples. 
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Combine plots
+library_size_plots1b <- plot_grid(hist_plot1b, norm_plot1b, ncol = 2, labels = "AUTO", label_size = 20)
+
+#Save plots
+ggsave("../Post_processing/Main results/Library_size_RAW_16S.png", plot = library_size_plots1b, width = 20, height = 6, dpi = 300)
+
+```
+
+**3. Ordination NMDS**
+
+I will finalize this exploratory analysis by doing a quick a dirty NMDS ordination to see if there are any patterns in the data according to the different factors I'm using. This will help me see later if the normalization methods are working or not as well, and to detect potential outliers in the data.
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+
+#log transformation needed to correct biases from having some more and less abundant ASVs
+asv_log_16S2 <- log(t(asv_tab_16S2 + 1))
+
+#Calculate Bray-Curtis dissimilarity
+Dat_16S.bc2 <- vegdist(asv_log_16S2, method = "bray") #Bray curtis
+
+#Calculate NMDS 
+Dat_16S.nmds2 <- metaMDS(Dat_16S.bc2, autotransform = F, trace = F, trymax=50)
+Dat_16S.nmds2 # stress = 0.03680458 
+
+#Stress plot
+stressplot(Dat_16S.nmds2, main = "Stress plot") #R2 = 0.998
+
+
+#1. Extract coordinates for the NMDS_____________________________________________________________________________________
+
+#Extract values from NMDS plot
+nmds_16S_bc2 <- plot(Dat_16S.nmds2)
+NMDS_16S_bc2 <- data.frame(NMDS1 = nmds_16S_bc2$sites[,1], 
+                      NMDS2 = nmds_16S_bc2$sites[,2],
+                      salinity_trt = metadata_16S_rhizo$salinity_trt,
+                      rhizo_removal = metadata_16S_rhizo$rhizo_removal,
+                      sedim_removal = metadata_16S_rhizo$Sedim_removal)
+
+
+
+#NMDS showing all levels of analysis
+
+NMDS_raw_16S2 <- ggplot() +
+  geom_point(data = NMDS_16S_bc2, aes(NMDS1, NMDS2, color = rhizo_removal, shape= sedim_removal), size = 2.5) +
+  #scale_colour_manual(values = cols_sampling)+ 
+  # scale_shape_manual(values= shapes)+
+  labs(title="NMDS: Raw data, Bray-curtis (stress= 0.036)", x = "NMDS1", y = "NMDS2")+
+  facet_grid(~salinity_trt, scales = "free")+
+    theme(axis.text.x = element_blank(), axis.title.x = element_text(size=16, face="bold"),  
+        axis.text.y = element_blank(), axis.title.y = element_text(size=16, face="bold"),
+        axis.ticks = element_blank(),
+        title = element_text(size=15, face="bold"),
+        panel.background = element_blank(), 
+        panel.border = element_rect(fill = NA, colour = "black", size=1),
+        legend.position = "right",
+        legend.box = "vertical",
+        legend.text = element_text(size=14), 
+        legend.title= element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.text.x = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.placement = "outside")  # Move the strips outside the panels
+
+#Save nmds plot
+ggsave("../Post_processing/Main results/NMDS_RAW_16S_rhizo.png", plot = NMDS_raw_16S2, width = 10, height = 4, dpi = 300)
+
+
+```
+
+
+________________________________________________________________________________________________________________________
+
+
+**Relative abundance**
+
+The simplest normalization method is relative abundance, which calculates the proportion of each ASV in a sample relative to the total number of reads in that sample. This method is widely used in microbiome studies to account for differences in sequencing depth across samples, providing a comparable measure of ASV abundance.If library sizes are relatively uniform (e.g. Cv < 20%), relative abundance normalization can be sufficient to correct for sequencing depth biases. However, it is not recommended for datasets with large disparities in library sizes, as it can introduce biases in downstream analyses.Lets calculate the relative abundance of the ASVs in the dataset.
+
+For this particular dataset, it is clear that library size disparities are very large, however calculating a relative abundance table and doing some visualizations can help us understand the data better and we can use the table for later analyses.
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+# Double-check that  no column has a sum of zero before dividing
+col_totals <- colSums(asv_tab_16S2)
+if (any(col_totals == 0)) {
+  warning("One or more samples have a total count of zero; check your data for potential issues.")
+}
+#If no message: all ok!
+
+#Create a new table with relative abundances on asv_tab_16S on 100% scale
+asv_relabun_16S2 <- sweep(asv_tab_16S2, 2, colSums(asv_tab_16S2), FUN = "/") * 100
+
+# Check if the sum of the relative abundances is 100 for each sample
+col_sums_check <- colSums(asv_relabun_16S2)
+if (all(abs(col_sums_check - 100) < 1e-6)) {
+  message("All columns sum to 100%, as expected.")
+} else {
+  warning("Some columns do not sum to 100%. Check the data.")
+}
+
+#All columns sum to 100%, as expected.
+
+#Save relative abundance table
+write.csv(asv_relabun_16S2, "../Post_processing/Main results/ASV_relabun_16S_rhizo.csv")
+
+```
+
+
+________________________________________________________________________________________________________________________
+
+
+**DESEq scaling method**
+
+DESeq2 normalization is a method that corrects for differences in sequencing depth across samples, aiming to keep data in an "absolute" abundance format rather than converting it to relative abundances. This approach works by selecting a reference abundance for each taxon, which is the geometric mean of that taxon’s abundances across all samples. For each sample, a scaling factor is then calculated as the median of ratios between the sample’s counts and the reference counts for all taxa.
+
+The assumption here is that most taxa are not differentially abundant, meaning their abundances should be fairly stable across samples. This median ratio is then used to adjust read counts, providing an estimate of what counts would look like if all samples had the same library size. One advantage of DESeq2 is that it can consider experimental design factors, which helps distinguish differences in library size due to biological variables versus those due to technical artifacts.
+
+**Some limitations**
+
+DESeq2 assumes that:
+
+1) Most taxa are not differentially abundant.
+2) Among differentially abundant taxa, there is a balance between over-abundant and under-abundant taxa.
+
+While these assumptions are reasonable for RNA-seq data (deseq2 was originally done for this), they may not always apply to microbiome data, which can have high diversity and compositional effects. Additionally, DESeq2 is not specifically designed for sparse datasets (datasets with a lot of zeros), which are common in microbiome studies. Low sequencing depth and a large number of zeros can introduce biases for this method to be used efficiently.
+
+To partially address this, DESeq2 offers a "poscounts" estimator, which can handle zero-inflated data better than the standard approach. This estimator adjusts scaling factors for samples with many zero counts, making it more suitable for microbiome data.We will use this method here.
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+# Ensure ASV table and metadata sample names are in the same order
+# Reorder `asv_tab_16S` columns to match `metadata` rownames if necessary
+#verify that sample names match, or reorder them if they don't match.
+
+asv_tab_16S2b <- as.matrix(asv_tab_16S2)
+if (!all.equal(colnames(asv_tab_16S2), rownames(metadata_16S_rhizo))) {
+  asv_tab_16S2b <- asv_tab_16S2b[, rownames(metadata_16S_rhizo)]
+}
+
+#Create DESEQ object to run DESEQ
+#Here we are using a full model with all the factors in the dataset, trying to model the hypothesis we are interested in testing
+deseq_16S2 <- DESeqDataSetFromMatrix(countData = asv_tab_16S2b,
+                                      colData = metadata_16S_rhizo,
+                          design = ~ salinity_trt + rhizo_removal + Sedim_removal)
+
+```
+
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Estimate size factors using "poscounts" to handle zero-inflated data
+deseq_16S2 <- estimateSizeFactors(deseq_16S2, type = "poscounts")
+
+# Extract size factors
+size_factors_16S2 <- sizeFactors(deseq_16S2)
+
+# Extract relevant columns from metadata and add sample names as a new column. 
+#We will create a dataframe with all correction values from all methods
+summary_norm_16S_rhizo <- data.frame(
+  SampleName = rownames(metadata_16S_rhizo),
+  salinity_trt = metadata_16S_rhizo$salinity_trt,
+  rhizo_removal = metadata_16S_rhizo$rhizo_removal,
+  sedim_removal = metadata_16S_rhizo$Sedim_removal,
+  SizeFactor_DESEQ2 = size_factors_16S2)
+
+#Summary statistics for scaling factors
+summary_scaling2 <- summary(summary_norm_16S_rhizo$SizeFactor_DESEQ2)
+summary_scaling2
+
+ # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+ # 0.1425  0.7742  0.9925  3.1989  1.3077 67.3610 
+
+```
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}  
+
+# Extract normalized counts directly using `counts()`
+asv_deseq_16S2 <- counts(deseq_16S2, normalized = TRUE)
+
+# Round normalized counts if necessary
+asv_deseq_16S2 <- as.data.frame(round(asv_deseq_16S2))
+
+# Remove ASVs with zero counts across all samples (as a sanity-check after normalization)
+asv_deseq_16S2 <- asv_deseq_16S2[rowSums(asv_deseq_16S2) > 0, ]
+
+#Save deseq2 normalized table
+write.csv(asv_deseq_16S2, "../Post_processing/Main results/ASV_deseq_Rhizo_16S.csv")
+
+```
+
+**Variation in library sizes**
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+#1. Summary statistics of library sizes
+library_sizes_deseq_16S2 <- colSums(asv_deseq_16S2)
+summary_stats_deseq_16S2 <- summary(library_sizes_deseq_16S2)
+summary_stats_deseq_16S2
+
+  #   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+  # 3194   56145   68262   63663   78256   97950 
+
+# Calculate coefficient of variation (CV) as an indicator of variability %
+cv_library_size_deseq2 <- round((sd(library_sizes_deseq_16S2) / mean(library_sizes_deseq_16S2) * 100),2)
+cv_library_size_deseq2 #37.2%
+
+```
+
+Here’s how to interpret this:
+
+**Low CV (< 20%):** Indicates relatively uniform library sizes, meaning samples have similar sequencing depths. In this case, normalization might have a minimal effect. If this is the case, a normalization would be less crucial, but applying a light normalization (like relative abundance) can also help to ensure that the data is comparable. More if we run differential abundance analysis that might be slighly sensitive to small differences in library sizes.
+
+**Moderate CV (20-40%):** Reflects some variability in library sizes, where normalization would be beneficial to minimize potential bias.
+
+**High CV (> 40%):** Indicates significant variability in sequencing depth across samples, suggesting a strong need for normalization to correct for these differences before further analysis.
+
+
+**Normality**
+
+Now lets visually inspect the distribution of library sizes using a histogram and Q-Q plot to assess normality.
+
+*1. Histograms*
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+#General histogram______________________________________________________________________
+
+# Histogram
+hist_plot2b <- ggplot(data = data.frame(library_sizes_deseq_16S2), aes(x = library_sizes_deseq_16S2)) +
+  geom_histogram(binwidth = 5000, fill = "steelblue", color = "black") +
+  labs(title = "Distribution of Library Sizes (DESeq2 Normalized)", x = "Number of Reads", y = "Number of Samples")+
+    annotate("text", x = Inf, y = Inf,  # Position at the top-right corner
+    label = paste("CV =", cv_library_size_deseq2, "%"),
+    hjust = 1.1, vjust = 1.1, size = 6, color = "black", fontface = "bold") +
+ theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+*2. Q-Q plot*
+
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Perform Shapiro-Wilk test
+shapiro_test2 <- shapiro.test(library_sizes_deseq_16S2)
+W_value2 <- round(shapiro_test2$statistic, 4)
+p_value2 <- formatC(shapiro_test2$p.value, format = "e", digits = 2)
+
+# Q-Q plot with Shapiro-Wilk test annotation
+norm_plot2b <- ggplot(data = data.frame(library_sizes_deseq_16S2), aes(sample = library_sizes_deseq_16S2)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(title = "Normal Q-Q Plot of Library Sizes (DESeq2 Normalized)", 
+       x = "Theoretical Quantiles", 
+       y = "Sample Quantiles") +
+  annotate("text", x = -2, y = max(library_sizes_deseq_16S2) * 0.9, 
+           label = paste("Shapiro-Wilk W =", W_value2, "\n", "p-value =", p_value2), 
+           size = 4, hjust = 0, color = "black")+
+   theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+**Shapiro-Wilks test:**
+
+Sometimes a bit strict but I added this test here to have additional evidence to accept or not the normalization. A low p-value here (< 0.05) suggests that the distribution of library sizes deviates significantly from a normal distribution. This means we can reject the null hypothesis of normality, indicating that the library sizes are not normally distributed.
+
+**Q-Q plot:**
+
+The plot shows deviations from the line, especially in the upper and lower tails (the ends of the distribution). This further supports that the library sizes have a non-normal distribution, with some samples having much higher or lower read counts compared to the majority of samples. 
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Combine plots
+library_size_plots2b <- plot_grid(hist_plot2b, norm_plot2b, ncol = 2, labels = "AUTO", label_size = 20)
+
+#Save plots
+ggsave("../Post_processing/Main results/Library_size_DESEQ2_Rhizo_16S.png", plot = library_size_plots2b, width = 20, height = 6, dpi = 300)
+
+
+```
+
+**3. Ordination NMDS**
+
+I will finalize this exploratory analysis by doing a quick a dirty NMDS ordination to see if there are any patterns in the data according to the different factors I'm using now the deseq2 normlaized data. This will help me see later if the normalization methods are working or not as well, and to detect potential outliers in the data.
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+
+#Calculate Bray-Curtis dissimilarity
+Dat_16S.bc2 <- vegdist(t(asv_deseq_16S2), method = "bray") #Bray curtis
+
+#Calculate NMDS
+Dat_16S.nmds2 <- metaMDS(Dat_16S.bc2, autotransform = F, trace = F, trymax=50)
+Dat_16S.nmds2 # stress =  0.04917117 
+
+#Stress plot
+stressplot(Dat_16S.nmds2, main = "Stress plot") #R2 = 0.99
+
+
+#1. Extract coordinates for the NMDS_____________________________________________________________________________________
+
+#Extract values from NMDS plot
+nmds_16S_bc2b <- plot(Dat_16S.nmds2)
+NMDS_16S_bc2b <- data.frame(NMDS1 = nmds_16S_bc2b$sites[,1], 
+                      NMDS2 = nmds_16S_bc2b$sites[,2],
+                      salinity_trt = metadata_16S_rhizo$salinity_trt,
+                      rhizo_removal = metadata_16S_rhizo$rhizo_removal,
+                      sedim_removal = metadata_16S_rhizo$Sedim_removal)
+
+
+
+#NMDS showing all levels of analysis
+NMDS_deseq_16S2 <- ggplot() +
+  geom_point(data = NMDS_16S_bc2b, aes(NMDS1, NMDS2, color = rhizo_removal, shape= sedim_removal), size = 2.5) +
+  #scale_colour_manual(values = cols_sampling)+ 
+  # scale_shape_manual(values= shapes)+
+  labs(title="NMDS: DESEQ2, Bray-curtis (stress= 0.049)", x = "NMDS1", y = "NMDS2")+
+  facet_grid(~ salinity_trt, scales = "free")+
+    theme(axis.text.x = element_blank(), axis.title.x = element_text(size=16, face="bold"),  
+        axis.text.y = element_blank(), axis.title.y = element_text(size=16, face="bold"),
+        axis.ticks = element_blank(),
+        title = element_text(size=15, face="bold"),
+        panel.background = element_blank(), 
+        panel.border = element_rect(fill = NA, colour = "black", size=1),
+        legend.position = "right",
+        legend.box = "vertical",
+        legend.text = element_text(size=14), 
+        legend.title= element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.text.x = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.placement = "outside")  # Move the strips outside the panels
+
+#Save nmds plot
+ggsave("../Post_processing/Main results/NMDS_DESEQ2_16S.png", plot = NMDS_deseq_16S2, width = 10, height = 4, dpi = 300)
+
+
+```
+
+### Bulk only
+
+**Raw data***
+
+In sequencing data analysis, understanding the variability in library sizes across samples is crucial before applying normalization techniques. Large disparities in read counts across samples can introduce biases, particularly in relative abundance measurements, potentially skewing downstream stats. To assess the need for normalization, I will focus here on the distribution of total sequence reads per sample. 
+
+Using both visual (histogram, Q-Q plot, and density plot) and statistical (coefficient of variation and Shapiro-Wilk test) methods, we evaluated the library sizes' spread and normality. This initial assessment provides insight into whether library sizes are comparable across samples or if significant adjustments are required, guiding the selection of appropriate normalization methods to mitigate sequencing depth biases and enhance the robustness of ecological inferences.
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+#Load the ASV table (if needed)
+asv_tab_16S3 <- read.csv("../Post_processing/ASV_table_archive/ASV_tab_nolowabun_bulk.csv", row.names = 1)
+
+#Filter metadata to include Type = Rhizo
+metadata_16S_bulk <- metadata_16S_1[metadata_16S_1$Type == "Bulk", ]
+
+#1. Summary statistics of library sizes
+library_sizes_16S3 <- colSums(asv_tab_16S3)
+summary_stats_16S3 <- summary(library_sizes_16S3)
+summary_stats_16S3
+
+   # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+   # 1687   28861   39681   42853   54648   85753
+
+# Calculate coefficient of variation (CV) as an indicator of variability %
+cv_library_size_raw3 <- round((sd(library_sizes_16S3) / mean(library_sizes_16S3) * 100),2)
+cv_library_size_raw3 #50.42%
+
+
+```
+
+Here’s how to interpret this:
+
+**Low CV (< 20%):** Indicates relatively uniform library sizes, meaning samples have similar sequencing depths. In this case, normalization might have a minimal effect. If this is the case, a normalization would be less crucial, but applying a light normalization (like relative abundance) can also help to ensure that the data is comparable. More if we run differential abundance analysis that might be slighly sensitive to small differences in library sizes.
+
+**Moderate CV (20-40%):** Reflects some variability in library sizes, where normalization would be beneficial to minimize potential bias.
+
+**High CV (> 40%):** Indicates significant variability in sequencing depth across samples, suggesting a strong need for normalization to correct for these differences before further analysis.
+
+Now let's look at specific cases or rather extreme cases to determine how much difference there is between the samples with the least and most reads:
+
+``` {r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Find min and max read counts and their indices
+min_reads_index_16S3 <- which.min(library_sizes_16S3) 
+min_reads_index_16S3 #Sample X307 has the least
+
+max_reads_index_16S3 <- which.max(library_sizes_16S3)
+max_reads_index_16S3 #Sample X341  has the most
+
+min_reads_16S3 <- library_sizes_16S3[min_reads_index_16S3]
+max_reads_16S3 <- library_sizes_16S3[max_reads_index_16S3]
+percentage_difference_16S3 <- ((max_reads_16S3 - min_reads_16S3) / min_reads_16S3)
+percentage_difference_16S3
+#So sample X341 has 49.83165 times more reads than sample X307
+
+```
+
+**Normality**
+
+Now lets visually inspect the distribution of library sizes using a histogram and Q-Q plot to assess normality.
+
+*1. Histograms*
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+#General histogram______________________________________________________________________
+
+# Histogram
+hist_plot1c <- ggplot(data = data.frame(library_sizes_16S3), aes(x = library_sizes_16S3)) +
+  geom_histogram(binwidth = 5000, fill = "steelblue", color = "black") +
+  labs(title = "Distribution of Library Sizes (Raw Data)", x = "Number of Reads", y = "Number of Samples")+
+    annotate("text", x = Inf, y = Inf,  # Position at the top-right corner
+    label = paste("CV =", cv_library_size_raw3, "%"),
+    hjust = 1.1, vjust = 1.1, size = 6, color = "black", fontface = "bold") +
+ theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+*2. Q-Q plot*
+
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Perform Shapiro-Wilk test
+shapiro_test3 <- shapiro.test(library_sizes_16S3)
+W_value3 <- round(shapiro_test3$statistic, 4)
+p_value3 <- formatC(shapiro_test3$p.value, format = "e", digits = 2)
+
+# Q-Q plot with Shapiro-Wilk test annotation
+norm_plot1c <- ggplot(data = data.frame(library_sizes_16S3), aes(sample = library_sizes_16S3)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(title = "Normal Q-Q Plot of Library Sizes (Raw Data)", 
+       x = "Theoretical Quantiles", 
+       y = "Sample Quantiles") +
+  annotate("text", x = -2, y = max(library_sizes_16S3) * 0.9, 
+           label = paste("Shapiro-Wilk W =", W_value3, "\n", "p-value =", p_value3), 
+           size = 4, hjust = 0, color = "black")+
+   theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+**Shapiro-Wilks test:**
+
+Sometimes a bit strict but I added this test here to have additional evidence to accept or not the normalization. A low p-value here (< 0.05) suggests that the distribution of library sizes deviates significantly from a normal distribution. This means we can reject the null hypothesis of normality, indicating that the library sizes are not normally distributed.
+
+**Q-Q plot:**
+
+The plot shows deviations from the line, especially in the upper and lower tails (the ends of the distribution). This further supports that the library sizes have a non-normal distribution, with some samples having much higher or lower read counts compared to the majority of samples. 
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Combine plots
+library_size_plots1c <- plot_grid(hist_plot1c, norm_plot1c, ncol = 2, labels = "AUTO", label_size = 20)
+
+#Save plots
+ggsave("../Post_processing/Main results/Library_size_RAW_16S.png", plot = library_size_plots1c, width = 20, height = 6, dpi = 300)
+
+```
+
+**3. Ordination NMDS**
+
+I will finalize this exploratory analysis by doing a quick a dirty NMDS ordination to see if there are any patterns in the data according to the different factors I'm using. This will help me see later if the normalization methods are working or not as well, and to detect potential outliers in the data.
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+
+#log transformation needed to correct biases from having some more and less abundant ASVs
+asv_log_16S3 <- log(t(asv_tab_16S3+ 1))
+
+#Calculate Bray-Curtis dissimilarity
+Dat_16S.bc3 <- vegdist(asv_log_16S3, method = "bray") #Bray curtis
+
+#Calculate NMDS 
+Dat_16S.nmds3 <- metaMDS(Dat_16S.bc3, autotransform = F, trace = F, trymax=50)
+Dat_16S.nmds3 # stress = 8.744576e-05 
+
+#Stress plot
+stressplot(Dat_16S.nmds3, main = "Stress plot") #Not great
+
+
+#1. Extract coordinates for the NMDS_____________________________________________________________________________________
+
+#Extract values from NMDS plot
+nmds_16S_bc3 <- plot(Dat_16S.nmds3)
+NMDS_16S_bc3 <- data.frame(NMDS1 = nmds_16S_bc3$sites[,1], 
+                      NMDS2 = nmds_16S_bc3$sites[,2],
+                      salinity_trt = metadata_16S_bulk$salinity_trt,
+                      rhizo_removal = metadata_16S_bulk$rhizo_removal,
+                      sedim_removal = metadata_16S_bulk$Sedim_removal,
+                      Sample = metadata_16S_bulk$Sample_ID)
+
+
+
+#NMDS showing all levels of analysis
+
+NMDS_raw_16S3 <- ggplot() +
+  geom_point(data = NMDS_16S_bc3, aes(NMDS1, NMDS2, color = rhizo_removal, shape= sedim_removal), size = 2.5) +
+  #scale_colour_manual(values = cols_sampling)+ 
+  # scale_shape_manual(values= shapes)+
+  labs(title="NMDS: Raw data, Bray-curtis (stress= 0.036)", x = "NMDS1", y = "NMDS2")+
+  facet_grid(~salinity_trt, scales = "free")+
+  geom_text_repel(data = NMDS_16S_bc3, aes(NMDS1, NMDS2, label = Sample), size = 3, max.overlaps = 100) +
+    theme(axis.text.x = element_blank(), axis.title.x = element_text(size=16, face="bold"),  
+        axis.text.y = element_blank(), axis.title.y = element_text(size=16, face="bold"),
+        axis.ticks = element_blank(),
+        title = element_text(size=15, face="bold"),
+        panel.background = element_blank(), 
+        panel.border = element_rect(fill = NA, colour = "black", size=1),
+        legend.position = "right",
+        legend.box = "vertical",
+        legend.text = element_text(size=14), 
+        legend.title= element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.text.x = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.placement = "outside")  # Move the strips outside the panels
+
+#Save nmds plot
+ggsave("../Post_processing/Main results/NMDS_RAW_16S_bulk_outliers.png", plot = NMDS_raw_16S3, width = 10, height = 4, dpi = 300)
+
+
+```
+
+
+________________________________________________________________________________________________________________________
+
+
+**Relative abundance**
+
+The simplest normalization method is relative abundance, which calculates the proportion of each ASV in a sample relative to the total number of reads in that sample. This method is widely used in microbiome studies to account for differences in sequencing depth across samples, providing a comparable measure of ASV abundance.If library sizes are relatively uniform (e.g. Cv < 20%), relative abundance normalization can be sufficient to correct for sequencing depth biases. However, it is not recommended for datasets with large disparities in library sizes, as it can introduce biases in downstream analyses.Lets calculate the relative abundance of the ASVs in the dataset.
+
+For this particular dataset, it is clear that library size disparities are very large, however calculating a relative abundance table and doing some visualizations can help us understand the data better and we can use the table for later analyses.
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+# Double-check that  no column has a sum of zero before dividing
+col_totals <- colSums(asv_tab_16S3)
+if (any(col_totals == 0)) {
+  warning("One or more samples have a total count of zero; check your data for potential issues.")
+}
+#If no message: all ok!
+
+#Create a new table with relative abundances on asv_tab_16S on 100% scale
+asv_relabun_16S3 <- sweep(asv_tab_16S3, 2, colSums(asv_tab_16S3), FUN = "/") * 100
+
+# Check if the sum of the relative abundances is 100 for each sample
+col_sums_check <- colSums(asv_relabun_16S3)
+if (all(abs(col_sums_check - 100) < 1e-6)) {
+  message("All columns sum to 100%, as expected.")
+} else {
+  warning("Some columns do not sum to 100%. Check the data.")
+}
+
+#All columns sum to 100%, as expected.
+
+#Save relative abundance table
+write.csv(asv_relabun_16S3, "../Post_processing/Main results/ASV_relabun_16S_bulk.csv")
+
+```
+
+
+________________________________________________________________________________________________________________________
+
+
+**DESEq scaling method**
+
+DESeq2 normalization is a method that corrects for differences in sequencing depth across samples, aiming to keep data in an "absolute" abundance format rather than converting it to relative abundances. This approach works by selecting a reference abundance for each taxon, which is the geometric mean of that taxon’s abundances across all samples. For each sample, a scaling factor is then calculated as the median of ratios between the sample’s counts and the reference counts for all taxa.
+
+The assumption here is that most taxa are not differentially abundant, meaning their abundances should be fairly stable across samples. This median ratio is then used to adjust read counts, providing an estimate of what counts would look like if all samples had the same library size. One advantage of DESeq2 is that it can consider experimental design factors, which helps distinguish differences in library size due to biological variables versus those due to technical artifacts.
+
+**Some limitations**
+
+DESeq2 assumes that:
+
+1) Most taxa are not differentially abundant.
+2) Among differentially abundant taxa, there is a balance between over-abundant and under-abundant taxa.
+
+While these assumptions are reasonable for RNA-seq data (deseq2 was originally done for this), they may not always apply to microbiome data, which can have high diversity and compositional effects. Additionally, DESeq2 is not specifically designed for sparse datasets (datasets with a lot of zeros), which are common in microbiome studies. Low sequencing depth and a large number of zeros can introduce biases for this method to be used efficiently.
+
+To partially address this, DESeq2 offers a "poscounts" estimator, which can handle zero-inflated data better than the standard approach. This estimator adjusts scaling factors for samples with many zero counts, making it more suitable for microbiome data.We will use this method here.
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+# Ensure ASV table and metadata sample names are in the same order
+# Reorder `asv_tab_16S` columns to match `metadata` rownames if necessary
+#verify that sample names match, or reorder them if they don't match.
+
+asv_tab_16S3b <- as.matrix(asv_tab_16S3)
+if (!all.equal(colnames(asv_tab_16S2), rownames(metadata_16S_rhizo))) {
+  asv_tab_16S2b <- asv_tab_16S2b[, rownames(metadata_16S_rhizo)]
+}
+
+#Create DESEQ object to run DESEQ
+#Here we are using a full model with all the factors in the dataset, trying to model the hypothesis we are interested in testing
+deseq_16S3 <- DESeqDataSetFromMatrix(countData = asv_tab_16S3b,
+                                      colData = metadata_16S_bulk,
+                          design = ~ salinity_trt + rhizo_removal + Sedim_removal)
+
+```
+
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Estimate size factors using "poscounts" to handle zero-inflated data
+deseq_16S3 <- estimateSizeFactors(deseq_16S3, type = "poscounts")
+
+# Extract size factors
+size_factors_16S3 <- sizeFactors(deseq_16S3)
+
+# Extract relevant columns from metadata and add sample names as a new column. 
+#We will create a dataframe with all correction values from all methods
+summary_norm_16S_bulk<- data.frame(
+  SampleName = rownames(metadata_16S_bulk),
+  salinity_trt = metadata_16S_bulk$salinity_trt,
+  rhizo_removal = metadata_16S_bulk$rhizo_removal,
+  sedim_removal = metadata_16S_bulk$Sedim_removal,
+  SizeFactor_DESEQ2 = size_factors_16S3)
+
+#Summary statistics for scaling factors
+summary_scaling3 <- summary(summary_norm_16S_bulk$SizeFactor_DESEQ2)
+summary_scaling3
+
+ # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+ # 0.2921  0.7906  1.0657  1.0821  1.2998  2.3922 
+
+```
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}  
+
+# Extract normalized counts directly using `counts()`
+asv_deseq_16S3 <- counts(deseq_16S3, normalized = TRUE)
+
+# Round normalized counts if necessary
+asv_deseq_16S3 <- as.data.frame(round(asv_deseq_16S3))
+
+# Remove ASVs with zero counts across all samples (as a sanity-check after normalization)
+asv_deseq_16S3 <- asv_deseq_16S3[rowSums(asv_deseq_16S3) > 0, ]
+
+#Save deseq2 normalized table
+write.csv(asv_deseq_16S3, "../Post_processing/Main results/ASV_deseq_Bulk_outliers_16S.csv")
+
+```
+
+**Variation in library sizes**
+
+```{r, echo=TRUE, include=T, eval=FALSE}
+
+#1. Summary statistics of library sizes
+library_sizes_deseq_16S3 <- colSums(asv_deseq_16S3)
+summary_stats_deseq_16S3 <- summary(library_sizes_deseq_16S3)
+summary_stats_deseq_16S3
+
+  #   Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+  # 5765   33565   37991   38198   44366   70626 
+
+# Calculate coefficient of variation (CV) as an indicator of variability %
+cv_library_size_deseq3 <- round((sd(library_sizes_deseq_16S3) / mean(library_sizes_deseq_16S3) * 100),2)
+cv_library_size_deseq3 # 33.77%
+
+```
+
+Here’s how to interpret this:
+
+**Low CV (< 20%):** Indicates relatively uniform library sizes, meaning samples have similar sequencing depths. In this case, normalization might have a minimal effect. If this is the case, a normalization would be less crucial, but applying a light normalization (like relative abundance) can also help to ensure that the data is comparable. More if we run differential abundance analysis that might be slighly sensitive to small differences in library sizes.
+
+**Moderate CV (20-40%):** Reflects some variability in library sizes, where normalization would be beneficial to minimize potential bias.
+
+**High CV (> 40%):** Indicates significant variability in sequencing depth across samples, suggesting a strong need for normalization to correct for these differences before further analysis.
+
+
+**Normality**
+
+Now lets visually inspect the distribution of library sizes using a histogram and Q-Q plot to assess normality.
+
+*1. Histograms*
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+#General histogram______________________________________________________________________
+
+# Histogram
+hist_plot2c <- ggplot(data = data.frame(library_sizes_deseq_16S3), aes(x = library_sizes_deseq_16S3)) +
+  geom_histogram(binwidth = 5000, fill = "steelblue", color = "black") +
+  labs(title = "Distribution of Library Sizes (DESeq2 Normalized)", x = "Number of Reads", y = "Number of Samples")+
+    annotate("text", x = Inf, y = Inf,  # Position at the top-right corner
+    label = paste("CV =", cv_library_size_deseq2, "%"),
+    hjust = 1.1, vjust = 1.1, size = 6, color = "black", fontface = "bold") +
+ theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+*2. Q-Q plot*
+
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Perform Shapiro-Wilk test
+shapiro_test3b <- shapiro.test(library_sizes_deseq_16S3)
+W_value3b <- round(shapiro_test3b$statistic, 4)
+p_value3b <- formatC(shapiro_test3b$p.value, format = "e", digits = 2)
+
+# Q-Q plot with Shapiro-Wilk test annotation
+norm_plot2c <- ggplot(data = data.frame(library_sizes_deseq_16S3), aes(sample = library_sizes_deseq_16S3)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(title = "Normal Q-Q Plot of Library Sizes (DESeq2 Normalized)", 
+       x = "Theoretical Quantiles", 
+       y = "Sample Quantiles") +
+  annotate("text", x = -2, y = max(library_sizes_deseq_16S3) * 0.9, 
+           label = paste("Shapiro-Wilk W =", W_value3b, "\n", "p-value =", p_value3b), 
+           size = 4, hjust = 0, color = "black")+
+   theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+**Shapiro-Wilks test:**
+
+Sometimes a bit strict but I added this test here to have additional evidence to accept or not the normalization. A low p-value here (< 0.05) suggests that the distribution of library sizes deviates significantly from a normal distribution. This means we can reject the null hypothesis of normality, indicating that the library sizes are not normally distributed.
+
+**Q-Q plot:**
+
+The plot shows deviations from the line, especially in the upper and lower tails (the ends of the distribution). This further supports that the library sizes have a non-normal distribution, with some samples having much higher or lower read counts compared to the majority of samples. 
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+# Combine plots
+library_size_plots2c <- plot_grid(hist_plot2c, norm_plot2c, ncol = 2, labels = "AUTO", label_size = 20)
+
+#Save plots
+ggsave("../Post_processing/Main results/Library_size_DESEQ2_Bulk_16S.png", plot = library_size_plots2c, width = 20, height = 6, dpi = 300)
+
+
+```
+
+**3. Ordination NMDS**
+
+I will finalize this exploratory analysis by doing a quick a dirty NMDS ordination to see if there are any patterns in the data according to the different factors I'm using now the deseq2 normlaized data. This will help me see later if the normalization methods are working or not as well, and to detect potential outliers in the data.
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+
+#Calculate Bray-Curtis dissimilarity
+Dat_16S.bc3 <- vegdist(t(asv_deseq_16S3), method = "bray") #Bray curtis
+
+#Calculate NMDS
+Dat_16S.nmds3 <- metaMDS(Dat_16S.bc3, autotransform = F, trace = F, trymax=50)
+Dat_16S.nmds3 # stress =  0.09258734 
+
+#Stress plot
+stressplot(Dat_16S.nmds3, main = "Stress plot") #R2 = 0.98
+
+
+#1. Extract coordinates for the NMDS_____________________________________________________________________________________
+
+#Extract values from NMDS plot
+nmds_16S_bc3b <- plot(Dat_16S.nmds3)
+NMDS_16S_bc3b <- data.frame(NMDS1 = nmds_16S_bc3b$sites[,1], 
+                      NMDS2 = nmds_16S_bc3b$sites[,2],
+                      salinity_trt = metadata_16S_bulk$salinity_trt,
+                      rhizo_removal = metadata_16S_bulk$rhizo_removal,
+                      sedim_removal = metadata_16S_bulk$Sedim_removal)
+
+
+
+#NMDS showing all levels of analysis
+NMDS_deseq_16S3 <- ggplot() +
+  geom_point(data = NMDS_16S_bc3b, aes(NMDS1, NMDS2, color = rhizo_removal, shape= sedim_removal), size = 2.5) +
+  #scale_colour_manual(values = cols_sampling)+ 
+  # scale_shape_manual(values= shapes)+
+  labs(title="NMDS: DESEQ2, Bray-curtis (stress= 0.092)", x = "NMDS1", y = "NMDS2")+
+  facet_grid(~ salinity_trt, scales = "free")+
+    theme(axis.text.x = element_blank(), axis.title.x = element_text(size=16, face="bold"),  
+        axis.text.y = element_blank(), axis.title.y = element_text(size=16, face="bold"),
+        axis.ticks = element_blank(),
+        title = element_text(size=15, face="bold"),
+        panel.background = element_blank(), 
+        panel.border = element_rect(fill = NA, colour = "black", size=1),
+        legend.position = "right",
+        legend.box = "vertical",
+        legend.text = element_text(size=14), 
+        legend.title= element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.text.x = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.placement = "outside")  # Move the strips outside the panels
+
+#Save nmds plot
+ggsave("../Post_processing/Main results/NMDS_DESEQ2_16S.png", plot = NMDS_deseq_16S3, width = 10, height = 4, dpi = 300)
+
+
+```
