@@ -1,0 +1,820 @@
+---
+title: "from_normalisation"
+format: html
+editor: visual
+---
+
+## Pipeline from Normalisation
+
+### Load packages
+```{r, echo=TRUE, include=T, eval=F, warning=FALSE}
+library(mvabund)
+library(readxl)
+library(tidyverse)
+library(tidyverse)
+library(phyloseq)
+library(seqinr)
+library(reshape2)
+library(readxl)
+library(cowplot)
+library(RColorBrewer)
+library(performance)
+library(Wrench)        # For Wrench normalization
+library(microbiome)    # Centered log ratio transformation
+library(DESeq2)        # For DESeq2 normalization and Variance Stabilizing Transformation (VST)
+library(metagenomeSeq) # For Cumulative Sum Scaling (CSS)
+library(writexl)       
+library(ggfortify)
+library(vegan)
+```
+### Read in raw data and relative abundance
+```{r}
+# ASV Table not normalised
+asv_tab_16S_all <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/ASV_tab_nolowabun_bulk_rhizo.csv", row.names = 1)
+asv_tab_16S_rhizo <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/ASV_tab_nolowabun_rhizo.csv", row.names = 1)
+asv_tab_16S_bulk <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/ASV_tab_nolowabun_bulk.csv", row.names = 1)
+asv_tab_16s_control <- asv_tab_16S_all %>%
+  select(starts_with("blank"), starts_with("swab"))
+
+asv_relabun <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/ASV_relabun_16S.csv", row.names = 1)
+
+asv_relabun_rhizo <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/ASV_relabun_16S_rhizo.csv", row.names = 1)
+
+asv_relabun_bulk <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/ASV_relabun_16S_bulk.csv", row.names = 1)
+```
+
+### Read in normalised data
+
+```{r}
+asv_deseq_16S_all <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/ASV_deseq_Bulk_Rhizo_16S.csv", row.names = 1)
+asv_deseq_16S_rhizo <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/ASV_deseq_Rhizo_16S.csv", row.names = 1)
+asv_deseq_16S_bulk <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/ASV_deseq_Bulk_outliers_16S.csv", row.names = 1)
+asv_deseq_16s_control <- asv_deseq_16S_all %>%
+  select(starts_with("blank"), starts_with("swab"))
+
+metadata_16S <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/ColData.csv", row.names = 1)
+rownames(metadata_16S) <- gsub("_", ".", rownames(metadata_16S))
+
+#Order factor levels
+metadata_16S$treatment <- factor(metadata_16S$treatment, levels = c("F", "B", "P", "E", "C"))
+
+#Colour palettes
+cols_sampling <- c(
+  F = "grey",
+  B = "hotpink",
+  P = "sienna1",
+  E = "yellow",
+  C = "deepskyblue"
+)
+
+metadata_16S_rhizo <- metadata_16S %>%
+  filter(type == "root")
+
+metadata_16S_bulk <- metadata_16S %>%
+  filter(type == "sed")
+
+metadata_16S_control <- metadata_16S %>%
+  filter(type %in% c("swab", "blank"))
+
+rownames(metadata_16S) = colnames(asv_deseq_16S_all)
+```
+
+### Remove low abundance from controls
+```{r}
+#3. Control samples
+
+#Check distribution of ASV abundances
+hist(rowSums(asv_tab_16s_control), breaks = 80, main = "Distribution of ASV abundances", xlab = "ASV abundance", ylab = "Frequency")
+
+# Define low-abundance threshold (e.g., 0.001% of total counts)
+abundance_threshold <- 10
+
+#ASVs with a total abundance (across all samples) greater than approximately 33 will be retained in your dataset.
+#Tweak this threshold value if you want to be more strict (e.g., 0.01% of total counts) or more lenient (e.g., 0.0001% of total counts).
+
+# Remove low-abundant taxa
+asv_tab_16s_control_a <- asv_tab_16s_control[rowSums(asv_tab_16s_control) > abundance_threshold, ]
+
+# Total reads before filtering
+total_reads_before <- sum(asv_tab_16s_control)
+
+# Total reads after filtering
+total_reads_after <- sum(asv_tab_16s_control_a)
+
+# Percentage of reads retained
+percent_retained <- (total_reads_after / total_reads_before) * 100
+
+# Display result
+percent_retained #97.45144% of reads retained
+
+asv_tab_16s_control <- asv_tab_16s_control_a
+
+#Save the ASV table for our records if necessary
+write.csv(asv_tab_16s_control, "C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/ASV_tab_nolowabun_control.csv")
+```
+
+
+### Taxonomy tables
+```{r}
+taxa_GTDB_all <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Taxonomy_GTDB_16S_bulk_rhizo.csv", row.names = 1)
+taxa_GTDB_rhizo <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Taxonomy_GTDB_16S_rhizo.csv", row.names = 1)
+taxa_GTDB_bulk <- read.csv("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Taxonomy_GTDB_16S_bulk.csv", row.names = 1)
+```
+
+### Remove taxa with low abundance for controls
+```{r}
+#Check distribution of ASV abundances
+hist(rowSums(asv_deseq_16s_control), breaks = 80, main = "Distribution of ASV abundances (CONTROLS)", xlab = "ASV abundance", ylab = "Frequency")
+
+# Define low-abundance threshold (e.g., 0.001% of total counts)
+abundance_threshold_C <- 10
+
+# Remove low-abundant taxa
+asv_deseq_16s_control_1 <- asv_deseq_16s_control[rowSums(asv_deseq_16s_control) > abundance_threshold_C, ]
+
+# Total reads before filtering
+total_reads_before_c <- sum(asv_deseq_16s_control)
+
+# Total reads after filtering
+total_reads_after_c <- sum(asv_deseq_16s_control_1)
+
+# Percentage of reads retained
+percent_retained_c <- (total_reads_after_c / total_reads_before_c) * 100
+
+# Display result
+percent_retained_c #94.60202 of reads retained
+
+asv_deseq_16s_control <- asv_deseq_16s_control_1
+```
+
+## DECONTAMINATION
+https://benjjneb.github.io/decontam/vignettes/decontam_intro.html?utm_source=chatgpt.com
+
+# RHIZOSPHERE
+## Library size
+```{r, echo=F, include=T, eval=T}
+
+#1. Summary statistics of library sizes
+library_sizes_16SR <- colSums(asv_tab_16S_rhizo)
+summary_stats_16SR <- summary(library_sizes_16SR)
+summary_stats_16SR
+
+
+  # Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+ #  2552    7284    8432    8250    9829   11969  
+
+print("CV")
+# Calculate coefficient of variation (CV) as an indicator of variability %
+cv_library_size_raw <- round((sd(library_sizes_16SR) / mean(library_sizes_16SR) * 100),2)
+cv_library_size_raw #25.88
+
+```
+
+
+``` {r, echo=F, include=F, eval=T}
+
+# Find min and max read counts and their indices
+min_reads_index_16SR <- which.min(library_sizes_16SR) 
+min_reads_index_16SR 
+
+max_reads_index_16SR <- which.max(library_sizes_16SR)
+max_reads_index_16SR 
+
+min_reads_16SR <- library_sizes_16SR[min_reads_index_16SR]
+max_reads_16SR <- library_sizes_16SR[max_reads_index_16SR]
+percentage_difference_16SR <- ((11969 -  2552) /  2552)
+percentage_difference_16SR
+# 3.690047% difference
+```
+
+**Normality**
+
+*Histograms and Q-Q plot*
+
+```{r, echo=F, include=F, eval=T}
+
+#General histogram______________________________________________________________________
+
+# Histogram
+hist_plot1R <- ggplot(data = data.frame(library_sizes_16SR), aes(x = library_sizes_16SR)) +
+  geom_histogram(binwidth = 1000, fill = "steelblue", color = "black") +
+  labs(title = "Distribution of Rhizosphere Library Sizes (Raw Data)", x = "Number of Reads", y = "Number of Samples")+
+    annotate("text", x = Inf, y = Inf,  # Position at the top-right corner
+    label = paste("CV =", cv_library_size_raw, "%"),
+    hjust = 1.1, vjust = 1.1, size = 6, color = "black", fontface = "bold") +
+ theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+
+
+```{r, echo=F, include=F, eval=T}
+
+# Perform Shapiro-Wilk test
+shapiro_test <- shapiro.test(library_sizes_16SR)
+W_value <- round(shapiro_test$statistic, 4)
+p_value <- formatC(shapiro_test$p.value, format = "e", digits = 2)
+
+# Q-Q plot with Shapiro-Wilk test annotation
+norm_plot1R <- ggplot(data = data.frame(library_sizes_16SR), aes(sample = library_sizes_16SR)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(title = "Normal Q-Q Plot of Rhizosphere Library Sizes (Raw Data)", 
+       x = "Theoretical Quantiles", 
+       y = "Sample Quantiles") +
+  annotate("text", x = -2, y = max(library_sizes_16SR) * 0.9, 
+           label = paste("Shapiro-Wilk W =", W_value, "\n", "p-value =", p_value), 
+           size = 4, hjust = 0, color = "black")+
+   theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+
+```{r, echo=F, include=TRUE, eval=T}
+
+# Combine plots
+library_size_plots1R <- plot_grid(hist_plot1R, norm_plot1R, ncol = 2, labels = "AUTO", label_size = 20)
+library_size_plots1R
+
+#Save plots
+ggsave(paste0("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/Rhizosphere_Library_size_RAW_Q1_16SR.png"), plot = library_size_plots1R, width = 20, height = 6, dpi = 300)
+
+```
+
+**3. Ordination NMDS**
+
+
+```{r, echo=F, include=TRUE, eval=T}
+
+
+#log transformation needed to correct biases from having some more and less abundant ASVs.
+asv_log_16SR <- log(t(asv_tab_16S_rhizo + 1))
+
+#Calculate Bray-Curtis dissimilarity
+Dat_16S.bc <- vegdist(asv_log_16SR, method = "bray") #Bray curtis
+
+#Calculate NMDS 
+Dat_16S.nmds <- metaMDS(Dat_16S.bc, autotransform = F, trace = F, trymax=50)
+Dat_16S.nmds 
+
+
+
+#1. Extract coordinates for the NMDS_____________________________________________________________________________________
+
+#Extract values from NMDS plot
+nmds_16S_bc1 <- plot(Dat_16S.nmds)
+NMDS_16S_bc1 <- data.frame(NMDS1 = nmds_16S_bc1$sites[,1], 
+                      NMDS2 = nmds_16S_bc1$sites[,2],
+                      treatment = metadata_16S_rhizo$treatment,
+                      tank = metadata_16S_rhizo$tank_,
+                      time = metadata_16S_rhizo$time,
+                      plant_ID = factor(metadata_16S_rhizo$plant_ID)
+                      )
+
+
+
+#NMDS showing all levels of analysis
+
+NMDS_sampling_16S_R <- ggplot() +
+  geom_point(data = NMDS_16S_bc1, aes(NMDS1, NMDS2, color = treatment, shape = tank), size = 2) +
+  facet_wrap(~time) +
+  # scale_shape_manual(values= shapes)+
+  labs(title="NMDS, Rhizosphere Raw data, Bray-curtis (stress= 0.149)", x = "NMDS1", y = "NMDS2")+
+    theme(axis.text.x = element_blank(), axis.title.x = element_text(size=16, face="bold"),  
+        axis.text.y = element_blank(), axis.title.y = element_text(size=16, face="bold"),
+        axis.ticks = element_blank(),
+        title = element_text(size=15, face="bold"),
+        panel.background = element_blank(), 
+        panel.border = element_rect(fill = NA, colour = "black", size=1),
+        legend.position = "right",
+        legend.box = "vertical",
+        legend.text = element_text(size=14), 
+        legend.title= element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.placement = "outside")  # Move the strips outside the panels
+
+NMDS_sampling_16S_R
+
+#Save nmds plot
+ggsave(paste0("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/NMDS_RAW_Q1_16SR.png"), plot = NMDS_sampling_16S_R, width = 16, height = 4, dpi = 300)
+
+```
+
+### root.BC.13 CAUSING ISSUES!!!
+```{r}
+# Sample to exclude
+exclude_samp <- "root.BC.13"
+
+# 1. Subset ASV table: drop that sample column
+asv_tab2 <- asv_tab_16S_rhizo[, colnames(asv_tab_16S_rhizo) != exclude_samp, drop = FALSE]
+
+# 2. Subset metadata accordingly
+# If metadata uses rownames for sample names:
+metadata2 <- metadata_16S_rhizo[rownames(metadata_16S_rhizo) != exclude_samp, , drop = FALSE]
+
+# If metadata has a column with sample names instead, use filter (adjust below accordingly)
+
+# 3. Log transform (transpose because vegdist expects samples as rows)
+asv_log_16SR2 <- log(t(asv_tab2 + 1))
+
+# 4. Calculate Bray–Curtis dissimilarity
+Dat_16S.bc2 <- vegdist(asv_log_16SR2, method = "bray")
+
+# 5. Perform NMDS
+Dat_16S.nmds2 <- metaMDS(Dat_16S.bc2, autotransform = FALSE, trace = FALSE, trymax = 50)
+
+# 6. Extract NMDS site scores
+nmds_sites2 <- scores(Dat_16S.nmds2, display = "sites")
+
+# 7. Combine with metadata for plotting
+NMDS_16S_bc2 <- data.frame(
+  NMDS1 = nmds_sites2[, 1],
+  NMDS2 = nmds_sites2[, 2],
+  treatment = metadata2$treatment,
+  tank = metadata2$tank_,
+  time = metadata2$time,
+  plant_ID = factor(metadata2$plant_ID)
+)
+
+# 8. Plot (excluding that sample)
+NMDS_sampling_16S_R2 <- ggplot(data = NMDS_16S_bc2, aes(NMDS1, NMDS2, color = treatment, shape = tank)) +
+  geom_point(size = 2) +
+  facet_wrap(~ time) +
+  labs(
+    title = paste0("NMDS, Rhizosphere (excluding ", exclude_samp, "), Bray-Curtis"),
+    x = "NMDS1", y = "NMDS2"
+  ) +
+  theme(
+    axis.text.x = element_blank(),
+    axis.title.x = element_text(size = 16, face = "bold"),
+    axis.text.y = element_blank(),
+    axis.title.y = element_text(size = 16, face = "bold"),
+    axis.ticks = element_blank(),
+    title = element_text(size = 15, face = "bold"),
+    panel.background = element_blank(),
+    panel.border = element_rect(fill = NA, colour = "black", size = 1),
+    legend.position = "right",
+    legend.box = "vertical",
+    legend.text = element_text(size = 14),
+    legend.title = element_text(size = 18, face = "bold"),
+    strip.text.y = element_text(size = 14, face = "bold"),
+    strip.placement = "outside"
+  )
+
+NMDS_sampling_16S_R2
+
+#Save nmds plot
+ggsave(paste0("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/NMDS_RAW_Q1_16SR2_fixed.png"), plot = NMDS_sampling_16S_R2, width = 16, height = 4, dpi = 300)
+```
+
+
+## DESEq scaling method
+
+```{r, echo=F, include=F, eval=T}
+
+# Ensure ASV table and metadata sample names are in the same order
+# Reorder `asv_tab_16S` columns to match `metadata` rownames if necessary
+#verify that sample names match, or reorder them if they don't match.
+
+colnames(asv_tab_16S_rhizo)==rownames(metadata_16S_rhizo)
+
+asv_tab_16S2 <- as.matrix(asv_tab_16S_rhizo)
+if (!all.equal(colnames(asv_tab_16S2), rownames(metadata_16S_rhizo))) {
+  asv_tab_16S2 <- asv_tab_16S2[, rownames(metadata_16S_rhizo)]
+}
+
+#Create DESEQ object to run DESEQ
+#Here we are using a full model with all the factors in the dataset, trying to model the hypothesis we are interested in testing
+deseq_16SR <- DESeqDataSetFromMatrix(countData = asv_tab_16S2,
+                                      colData = metadata_16S_rhizo,
+                          design = ~ treatment)
+
+```
+
+
+```{r, echo=F, include=TRUE, eval=T}
+
+# Estimate size factors using "poscounts" to handle zero-inflated data
+deseq_16SR <- estimateSizeFactors(deseq_16SR, type = "poscounts")
+
+# Extract size factors
+size_factors_16SR <- sizeFactors(deseq_16SR)
+
+# Extract relevant columns from metadata and add sample names as a new column. 
+#We will create a dataframe with all correction values from all methods
+summary_norm_16SR <- data.frame(
+  SampleName = rownames(metadata_16S_rhizo),
+  treatment = metadata_16S_rhizo$treatment,
+  time = metadata_16S_rhizo$time,
+  tank = metadata_16S_rhizo$tank_origin,
+  SizeFactor_DESEQ2R = size_factors_16SR)
+
+#Summary statistics for scaling factors
+summary_scalingR <- summary(summary_norm_16SR$SizeFactor_DESEQ2R)
+summary_scalingR
+
+ #  Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+# 0.6804  0.8241  0.9683  1.0218  1.2184  1.4145 
+
+# Calculate coefficient of variation (CV) as an indicator of variability in %
+cv_scaling_deseq2R <- sd(summary_norm_16SR$SizeFactor_DESEQ2R) / mean(summary_norm_16SR$SizeFactor_DESEQ2R) * 100
+cv_scaling_deseq2R # 20.91568%
+
+
+```
+
+
+```{r, echo=F, include=F, eval=T}  
+
+# Extract normalized counts directly using `counts()`
+asv_deseq_16SR <- counts(deseq_16SR, normalized = TRUE)
+
+# Round normalized counts if necessary
+asv_deseq_16SR <- as.data.frame(round(asv_deseq_16SR))
+
+# Remove ASVs with zero counts across all samples (as a sanity-check after normalization)
+asv_deseq_16SR <- asv_deseq_16SR[rowSums(asv_deseq_16SR) > 0, ]
+
+#Save deseq2 normalized table
+write.csv(asv_deseq_16SR, paste0("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Main_results/ASV_deseq2_Q1_16R.csv"))
+
+```
+
+**Variation in library sizes**
+
+```{r, echo=F, include=T, eval=T}
+
+#1. Summary statistics of library sizes
+library_sizes_deseq_16SR <- colSums(asv_deseq_16SR)
+summary_stats_deseq_16SR <- summary(library_sizes_deseq_16SR)
+summary_stats_deseq_16SR
+
+  #  Min. 1st Qu.  Median    Mean 3rd Qu.    Max. 
+ #  2093    6767    7688    8542   10780   14942  
+
+print("CV")
+# Calculate coefficient of variation (CV) as an indicator of variability %
+cv_library_size_deseqR <- round((sd(library_sizes_deseq_16SR) / mean(library_sizes_deseq_16SR) * 100),2)
+cv_library_size_deseqR #36.49%
+
+```
+
+**Normality**
+
+
+*1. Histograms*
+
+```{r, echo=F, include=F, eval=T}
+
+#General histogram______________________________________________________________________
+
+# Histogram
+hist_plot2 <- ggplot(data = data.frame(library_sizes_deseq_16SR), aes(x = library_sizes_deseq_16SR)) +
+  geom_histogram(binwidth = 1000, fill = "steelblue", color = "black") +
+  labs(title = "Distribution of Rhizo Library Sizes (DESeq2 Normalized)", x = "Number of Reads", y = "Number of Samples")+
+    annotate("text", x = Inf, y = Inf,  # Position at the top-right corner
+    label = paste("CV =", cv_library_size_deseqR, "%"),
+    hjust = 1.1, vjust = 1.1, size = 6, color = "black", fontface = "bold") +
+ theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+*2. Q-Q plot*
+
+
+```{r, echo=F, include=F, eval=T}
+
+# Perform Shapiro-Wilk test
+shapiro_test <- shapiro.test(library_sizes_deseq_16SR)
+W_value <- round(shapiro_test$statistic, 4)
+p_value <- formatC(shapiro_test$p.value, format = "e", digits = 2)
+
+# Q-Q plot with Shapiro-Wilk test annotation
+norm_plot2 <- ggplot(data = data.frame(library_sizes_deseq_16SR), aes(sample = library_sizes_deseq_16SR)) +
+  stat_qq() +
+  stat_qq_line() +
+  labs(title = "Normal Q-Q Plot of Library Sizes (DESeq2 Normalized)", 
+       x = "Theoretical Quantiles", 
+       y = "Sample Quantiles") +
+  annotate("text", x = -2, y = max(library_sizes_deseq_16S) * 0.9, 
+           label = paste("Shapiro-Wilk W =", W_value, "\n", "p-value =", p_value), 
+           size = 4, hjust = 0, color = "black")+
+   theme(axis.text.y = element_text(size =18), axis.title.y = element_text(size=25, face='bold'),
+        axis.text.x = element_text(size = 18), axis.title.x = element_blank(),
+        legend.position="none", legend.direction="horizontal",
+        legend.title = element_text(size= 18, face='bold'),
+        legend.text= element_text(size= 18),
+        panel.background = element_rect(fill= "white", colour="black"),
+        strip.text = element_text(size=12, face= "bold"),
+        strip.background =element_rect(fill="grey92"),
+        plot.title = element_text( face= "bold", size= 24))
+
+```
+
+
+
+```{r, echo=F, include=TRUE, eval=T}
+
+# Combine plots
+library_size_plots2 <- plot_grid(hist_plot2, norm_plot2, ncol = 2, labels = "AUTO", label_size = 20)
+library_size_plots2
+#Save plots
+ggsave(paste0(path2,"/Library_size_DESEQ2_Q1_16R.png"), plot = library_size_plots2, width = 20, height = 6, dpi = 300)
+
+
+```
+
+**3. Ordination NMDS**
+
+
+```{r, echo=F, include=TRUE, eval=T}
+
+
+#Calculate Bray-Curtis dissimilarity
+Dat_16S.bc3 <- vegdist(t(asv_deseq_16SR), method = "bray") #Bray curtis
+
+#Calculate NMDS
+Dat_16S.nmds3 <- metaMDS(Dat_16S.bc3, autotransform = F, trace = F, trymax=50)
+Dat_16S.nmds3
+
+
+#1. Extract coordinates for the NMDS_____________________________________________________________________________________
+
+#Extract values from NMDS plot
+nmds_16S_bc3 <- plot(Dat_16S.nmds3)
+NMDS_16S_bc3 <- data.frame(  NMDS1 = nmds_sites2[, 1],
+                             NMDS2 = nmds_sites2[, 2],
+                             treatment = metadata2$treatment,
+                             tank = metadata2$tank_origin,
+                             time = metadata2$time,
+                             plant_ID = factor(metadata2$plant_ID)
+)
+
+
+#NMDS showing all levels of analysis
+
+NMDS_deseq_16S <- ggplot() +
+  geom_point(data = NMDS_16S_bc3, aes(NMDS1, NMDS2, color = treatment, shape = tank), size = 2) +
+  facet_grid(~time, scales = "free")+
+  # scale_shape_manual(values= shapes)+
+  labs(title="NMDS: DESEQ2, Bray-curtis (stress= 0.146)", x = "NMDS1", y = "NMDS2")+
+  theme(axis.text.x = element_blank(), axis.title.x = element_text(size=16, face="bold"),  
+        axis.text.y = element_blank(), axis.title.y = element_text(size=16, face="bold"),
+        axis.ticks = element_blank(),
+        title = element_text(size=15, face="bold"),
+        panel.background = element_blank(), 
+        panel.border = element_rect(fill = NA, colour = "black", size=1),
+        legend.position = "right",
+        legend.box = "vertical",
+        legend.text = element_text(size=14), 
+        legend.title= element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.placement = "outside")  # Move the strips outside the panels
+
+NMDS_deseq_16S
+#Save nmds plot
+ggsave(paste0("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Plots/NMDS_DESEQ2_Q1_16SR.png"), plot = NMDS_deseq_16S, width = 16, height = 4, dpi = 300)
+## NDMS Ordination Plots
+```
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+shapes <- c("tank_1" = 16, "tank_2" = 17, "tank_3" = 15) 
+
+# 1. Subset ASV table: drop that sample column
+asv_tab2R <- asv_deseq_16SR[, colnames(asv_deseq_16SR) != exclude_samp, drop = FALSE]
+
+# If metadata has a column with sample names instead, use filter (adjust below accordingly)
+
+#log transformation needed to correct biases from having some more and less abundant ASVs
+asv_log_16S_r <- log(t(asv_tab2R + 1))
+
+#Calculate Bray-Curtis dissimilarity
+Dat_16S.bc <- vegdist(asv_log_16S_r, method = "bray") #Bray curtis
+
+#Calculate NMDS 
+Dat_16S.nmds <- metaMDS(Dat_16S.bc, autotransform = F, trace = F, trymax=50)
+Dat_16S.nmds # stress = 0.06932793 
+
+#Stress plot
+stressplot(Dat_16S.nmds, main = "Stress plot")
+
+
+#1. Extract coordinates for the NMDS_____________________________________________________________________________________
+
+#Extract values from NMDS plot
+nmds_16S_bc1 <- plot(Dat_16S.nmds)
+NMDS_16S_bc1 <- data.frame(NMDS1 = nmds_16S_bc1$sites[,1], 
+                      NMDS2 = nmds_16S_bc1$sites[,2],
+                      treatment = metadata2$treatment,
+                      plant = metadata2$plant,
+                      time = metadata2$time,
+                      tank = metadata2$tank_origin)
+
+#NMDS showing all levels of analysis
+
+(x=treatment, y=mean_library_size, fill=treatment)
+
+NMDS_deseq_16SR <- ggplot() +
+  geom_point(data = NMDS_16S_bc1, aes(NMDS1, NMDS2, color = treatment, shape = tank), size = 2.5) +
+  scale_colour_manual(values = cols_sampling)+ 
+  scale_shape_manual(values = shapes)+
+  labs(title="NMDS: Rhizosphere Deseq data, Bray-curtis (stress= 0.07)", x = "NMDS1", y = "NMDS2")+
+  facet_grid(~time, scales = "free")+
+    theme(axis.text.x = element_blank(), axis.title.x = element_text(size=16, face="bold"),  
+        axis.text.y = element_blank(), axis.title.y = element_text(size=16, face="bold"),
+        axis.ticks = element_blank(),
+        title = element_text(size=15, face="bold"),
+        panel.background = element_blank(), 
+        panel.border = element_rect(fill = NA, colour = "black", size=1),
+        legend.position = "right",
+        legend.box = "vertical",
+        legend.text = element_text(size=14), 
+        legend.title= element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.text.x = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.placement = "outside")  # Move the strips outside the panels
+
+NMDS_deseq_16SR
+
+#Save nmds plot
+ggsave("C:/Users/bonni/OneDrive - UNSW/2025 Honours/Data/Quartos/Katana_outputs/Plots/NMDS_Deseq_16S_rhizo.png", plot = NMDS_deseq_16SR, width = 10, height = 7, dpi = 300)
+
+
+```
+
+```{r, echo=TRUE, include=TRUE, eval=FALSE}
+
+
+#log transformation needed to correct biases from having some more and less abundant ASVs
+asv_log_16S_r <- log(t(asv_tab_16S_rhizo + 1))
+
+#Calculate Bray-Curtis dissimilarity
+Dat_16S.bc <- vegdist(asv_log_16S_r, method = "bray") #Bray curtis
+
+#Calculate NMDS 
+Dat_16S.nmds <- metaMDS(Dat_16S.bc, autotransform = F, trace = F, trymax=50)
+Dat_16S.nmds # stress = 0.06932793 
+
+#Stress plot
+stressplot(Dat_16S.nmds, main = "Stress plot")
+
+
+#1. Extract coordinates for the NMDS_____________________________________________________________________________________
+
+#Extract values from NMDS plot
+nmds_16S_bc1 <- plot(Dat_16S.nmds)
+NMDS_16S_bc1 <- data.frame(NMDS1 = nmds_16S_bc1$sites[,1], 
+                      NMDS2 = nmds_16S_bc1$sites[,2],
+                      treatment = metadata_16S_1$treatment,
+                      plant = metadata_16S_1$plant,
+                      time = metadata_16S_1$time)
+
+
+
+#NMDS showing all levels of analysis
+
+(x=treatment, y=mean_library_size, fill=treatment
+
+NMDS_raw_16S <- ggplot() +
+  geom_point(data = NMDS_16S_bc1, aes(NMDS1, NMDS2, color = treatment, shape= sedim_removal), size = 2.5) +
+  #scale_colour_manual(values = cols_sampling)+ 
+  # scale_shape_manual(values= shapes)+
+  labs(title="NMDS: Raw data, Bray-curtis (stress= 0.07)", x = "NMDS1", y = "NMDS2")+
+  facet_grid(salinity_trt~Type, scales = "free")+
+    theme(axis.text.x = element_blank(), axis.title.x = element_text(size=16, face="bold"),  
+        axis.text.y = element_blank(), axis.title.y = element_text(size=16, face="bold"),
+        axis.ticks = element_blank(),
+        title = element_text(size=15, face="bold"),
+        panel.background = element_blank(), 
+        panel.border = element_rect(fill = NA, colour = "black", size=1),
+        legend.position = "right",
+        legend.box = "vertical",
+        legend.text = element_text(size=14), 
+        legend.title= element_text(size=18, face="bold"),
+        strip.text.y = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.text.x = element_text(size=14, face="bold"),  # Adjust facet strip text
+        strip.placement = "outside")  # Move the strips outside the panels
+
+#Save nmds plot
+ggsave("/srv/scratch/z5260463/Post_processing/Main_results/NMDS_RAW_16S.png", plot = NMDS_raw_16S, width = 10, height = 7, dpi = 300)
+
+
+```
+
+
+## Phyloseq
+https://ucdavis-bioinformatics-training.github.io/2018-Alliance-for-Global-Health-and-Science-Makerere-University_MCA/MCA_Workshop_R/phyloseq.html
+### T0
+Create data frame
+```{r}
+library(phyloseq)
+metadata_16SR_T0 <- metadata_16S_rhizo %>%
+  filter(time == "T0")
+
+samples_to_keep <- rownames(metadata_16SR_T0)
+asv_tab_16SR_T0 <- asv_tab_16S_rhizo[, samples_to_keep, drop = FALSE]
+
+OTU1 <- otu_table(as.matrix(asv_tab_16SR_T0), taxa_are_rows = TRUE)       
+SAM1 <- sample_data(metadata_16SR_T0, errorIfNULL = TRUE)                
+TAX1 <- tax_table(as.matrix(taxa_GTDB_rhizo)) 
+phy_R_t0 <- phyloseq(OTU1, TAX1, SAM1) 
+
+alpha_div_rT0 <- estimate_richness(phy_R_t0, measures = c("Observed", "Chao1", "ACE", "Shannon", "Simpson", "InvSimpson", "Fisher"))
+
+sample_data(phylo_rhizo) <- cbind(sample_data(phy_R_t0), alpha_div_rT0)
+
+plot_richness(phy_R_t0, x = "tank_origin", color = "treatment", shape = "tank_origin", measures = c("Shannon", "Simpson"))
+```
+Plot the data for T0
+```{r}
+plot_bar(phy_R_t0, fill = "Phylum") + theme(legend.position="right")
+```
+
+Validate for T0
+
+### T1
+``` {r}
+metadata_16SR <- metadata_16S_rhizo %>%
+  filter(time == "T1")
+
+samples_to_keep <- rownames(metadata_16SR)
+asv_tab_16SR <- asv_tab_16S_rhizo[, samples_to_keep, drop = FALSE]
+
+OTU2 <- otu_table(as.matrix(asv_tab_16SR), taxa_are_rows = TRUE)       
+SAM2 <- sample_data(metadata_16SR, errorIfNULL = TRUE)                
+TAX2 <- tax_table(as.matrix(taxa_GTDB_rhizo)) 
+phylo_rhizo <- phyloseq(OTU2, TAX2, SAM2) 
+
+alpha_div <- estimate_richness(phylo_rhizo, measures = c("Observed", "Chao1", "ACE", "Shannon", "Simpson", "InvSimpson", "Fisher"))
+
+sample_data(phylo_rhizo) <- cbind(sample_data(phylo_rhizo), alpha_div)
+
+plot_richness(phylo_rhizo, x = "treatment", color = "treatment", measures = c("Shannon", "Simpson"))
+```
+## NMDS
+Ordinate into NMDS
+```{r}
+ps.prop <- transform_sample_counts(phylo_rhizo, function(OTU2) OTU2/sum(OTU2))
+ord.nmds.bray <- ordinate(ps.prop, method="NMDS", distance="bray")
+plot_ordination(ps.prop, ord.nmds.bray, color="treatment", title="Bray NMDS Rhizosphere Counts at T1")
+```
+## Diversity Calculations
+```{r}
+plot_bar(phylo_rhizo, fill = "Phylum") + theme(legend.position="right")
+```
+
+
+## Bar plots of top 100 taxa
+```{r}
+top100 <- names(sort(taxa_sums(phylo_rhizo), decreasing=TRUE))[1:100]
+ps.top100 <- transform_sample_counts(phylo_rhizo, function(OTU2) OTU2/sum(OTU2))
+ps.top100 <- prune_taxa(top100, ps.top100)
+plot_bar(ps.top100, x="treatment", fill="Order")
+```
+## Bar plots of top 20 taxa
+Sulfurimonas are chemoautotrophic bacteria crucial for sulfur and nitrogen cycling in sulfidic habitats, such as sediments and hydrothermal vents. Their primary function is to oxidize reduced sulfur compounds like sulfide and thiosulfate using nitrate as an electron acceptor, a process known as denitrification, which detoxifies sulfide. Some species also function as aerobic hydrogen oxidizers, utilizing hydrogen as an energy source. 
+```{r}
+top20 <- names(sort(taxa_sums(phylo_rhizo), decreasing=TRUE))[1:20]
+ps.top20 <- transform_sample_counts(phylo_rhizo, function(OTU2) OTU2/sum(OTU2))
+ps.top20 <- prune_taxa(top20, ps.top20)
+plot_bar(ps.top20, x="treatment_long", fill="Genus")
+```
+
+## BULK SED
+```{r}
+OTU2 <- otu_table(as.matrix(asv_tab_16S_bulk), taxa_are_rows = TRUE)       
+SAM2 <- sample_data(metadata_16S_bulk, errorIfNULL = TRUE)                
+TAX2 <- tax_table(as.matrix(taxa_GTDB_bulk)) 
+phylo_bulk <- phyloseq(OTU2, TAX2, SAM2) 
+
+alpha_div2 <- estimate_richness(phylo_bulk, measures = c("Observed", "Chao1", "ACE", "Shannon", "Simpson", "InvSimpson", "Fisher"))
+
+sample_data(phylo_bulk) <- cbind(sample_data(phylo_bulk), alpha_div2)
+
+plot_richness(phylo_bulk, x = "treatment", color = "treatment", shape = "plant", measures = c("Shannon", "Simpson"))
+```
+
